@@ -132,6 +132,14 @@ type Backend interface {
 	WebViewAvailable() bool
 }
 
+// HostedBackend registers with an externally owned native event loop. RunHosted
+// returns after registration, while the application remains live. stopped must
+// run on the UI thread exactly once after windows and callbacks have stopped.
+// An error means startup failed and the application can finish immediately.
+type HostedBackend interface {
+	RunHosted(stopped func()) error
+}
+
 // WindowStateWindow is a window whose bounds in DIPs change with the
 // scales of the displays where they differ (Windows).
 // WindowStateBounds is its rectangle in the screen's pixels, which window

@@ -76,6 +76,8 @@ type Application struct {
 var App = &Application{readyCh: make(chan struct{}), Dock: &Dock{}, JumpList: &JumpList{}}
 
 // Run starts the native event loop and blocks until the application quits.
+// With a HostedBackend, it returns after registering with the native host;
+// the application stays live until the host invokes its stopped callback.
 // It must be called from the main goroutine, usually as the last statement
 // of main.
 //
@@ -119,6 +121,13 @@ func (a *Application) Run() error {
 	quitOnSignals()
 	// Run whatever was scheduled before the event loop existed.
 	b.Signal()
+	if hosted, ok := b.(platform.HostedBackend); ok {
+		err := hosted.RunHosted(a.finish)
+		if err != nil {
+			a.finish()
+		}
+		return err
+	}
 	err := b.Run()
 	a.finish()
 	return err

@@ -1,4 +1,4 @@
-//go:build !darwin && !(linux && (amd64 || arm64)) && !(windows && (amd64 || arm64)) && !mygo_noinspector
+//go:build !mygo_noinspector && (mygo_custom_backend || (!darwin && !(linux && (amd64 || arm64)) && !(windows && (amd64 || arm64))))
 
 package automation
 

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"github.com/egoist/mygo/internal/gpu"
 	"log"
 	"os"
 	"slices"
@@ -594,10 +595,17 @@ func (h *windowHost) makeGPU() {
 	retry := h.gpuTried
 	h.gpuTried, h.retryAt = true, time.Time{}
 	n := h.conn.Surface.Native()
-	if os.Getenv("MYGO_GPU") == "0" || n == (platform.SurfaceNative{}) {
+	factory, custom := h.conn.Surface.(gpu.RendererFactory)
+	if os.Getenv("MYGO_GPU") == "0" || !custom && n == (platform.SurfaceNative{}) {
 		return
 	}
-	r, err := newGPU(n)
+	var r gpuRenderer
+	var err error
+	if custom {
+		r, err = factory.NewRenderer()
+	} else {
+		r, err = newGPU(n)
+	}
 	switch {
 	case err != nil:
 		log.Printf("mygo: drawing without the GPU: %v", err)

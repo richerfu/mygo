@@ -162,3 +162,17 @@ func (a *textInputAdapter) IndexForPoint(x, y float64) (int, bool) {
 	}
 	return 0, false
 }
+
+// TextSelectionClient is an optional native IME selection extension of a text
+// input client. Ranges retain the same UTF-16 representation as TextInputClient.
+type TextSelectionClient interface{ SetSelection(TextInputSelection) bool }
+
+func (a *textInputAdapter) SetSelection(s platform.TextSelection) bool {
+	if c, _ := a.client(); c != nil {
+		if setter, ok := c.(TextSelectionClient); ok && setter.SetSelection(s) {
+			a.changed()
+			return true
+		}
+	}
+	return false
+}

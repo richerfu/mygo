@@ -1,4 +1,4 @@
-//go:build darwin && !mygo_noinspector
+//go:build !mygo_custom_backend && darwin && !mygo_noinspector
 
 package automation
 

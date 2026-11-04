@@ -38,6 +38,10 @@ var fb *fake.Backend
 // TestMain runs the application on the main goroutine with the fake
 // backend, like a real program, and the tests on another goroutine.
 func TestMain(m *testing.M) {
+	if os.Getenv("MYGO_TEST_HOSTED") == "1" {
+		hostedTestHelper()
+		return
+	}
 	if os.Getenv("MYGO_TEST_SECOND_INSTANCE") == "1" {
 		// Helper process for TestSingleInstance. Only an instance that
 		// hands over passes the foreground on (Windows).

@@ -1,3 +1,5 @@
+//go:build !mygo_custom_backend
+
 package ui
 
 import (

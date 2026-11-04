@@ -1,4 +1,4 @@
-//go:build (linux && (amd64 || arm64)) || js
+//go:build mygo_custom_backend || (linux && (amd64 || arm64)) || js
 
 package gl
 

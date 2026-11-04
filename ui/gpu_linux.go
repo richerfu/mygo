@@ -1,4 +1,4 @@
-//go:build linux && (amd64 || arm64)
+//go:build linux && !mygo_custom_backend && (amd64 || arm64)
 
 package ui
 

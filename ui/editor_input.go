@@ -351,3 +351,26 @@ func (w *widgetTextInput) IndexForPoint(p Point) (int, bool) {
 	}
 	return w.virtualUnits(position.Index), true
 }
+
+// SetSelection translates a native IME selection at the storage boundary.
+// Widget editing, grapheme navigation and undo remain the editor's own.
+func (w *widgetTextInput) SetSelection(s TextInputSelection) bool {
+	w.prepare()
+	ed := w.ed
+	ed.commitCompose()
+	r := platform.NormalizeTextRange(s.Range)
+	a, z := w.virtualRune(r.Start), w.virtualRune(r.End)
+	if s.Reversed {
+		ed.move(z, false)
+		ed.move(a, true)
+	} else {
+		ed.move(a, false)
+		ed.move(z, true)
+	}
+	ed.hasDesired = false
+	if ed.area != nil {
+		ed.area.reveal = true
+	}
+	w.publish()
+	return true
+}

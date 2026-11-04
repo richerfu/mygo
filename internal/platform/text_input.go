@@ -187,3 +187,7 @@ func ClientDeleteRange(client TextInputClient, offset, count int) TextRange {
 	before, after := max(0, -offset)*2, max(0, offset+max(count, 0))*2
 	return clientTextContext(client, before, after).DeleteRange(offset, count)
 }
+
+// TextSelectionClient optionally accepts an IME selection without replacing
+// document text. Existing application-owned clients need not implement it.
+type TextSelectionClient interface{ SetSelection(TextSelection) bool }
