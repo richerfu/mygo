@@ -1,4 +1,4 @@
-//go:build windows && (amd64 || arm64)
+//go:build !mygo_custom_backend && windows && (arm64 || amd64)
 
 package audio
 

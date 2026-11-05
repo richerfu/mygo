@@ -21,6 +21,18 @@ type Presenter struct {
 	rgba    []byte
 }
 
+// NewPresenter prepares a presenter for the current context. Its textures
+// are allocated on the first Present and live until the context is destroyed.
+func NewPresenter() (*Presenter, error) {
+	if err := load(); err != nil {
+		return nil, err
+	}
+	if !hasContext() {
+		return nil, errNoContext
+	}
+	return &Presenter{}, nil
+}
+
 // Present copies premultiplied BGRA rows of stride bytes, width×height
 // pixels, into the bound framebuffer, which is that size. The context
 // current must be the one of the last call, or a new one.

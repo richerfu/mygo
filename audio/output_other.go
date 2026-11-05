@@ -1,4 +1,4 @@
-//go:build !darwin && !(linux && (amd64 || arm64)) && !(windows && (amd64 || arm64)) && !js
+//go:build mygo_custom_backend || (!js && ((!darwin && !linux && !windows) || (!arm64 && !amd64)))
 
 package audio
 

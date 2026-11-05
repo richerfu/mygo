@@ -2,9 +2,11 @@ package mygo
 
 import (
 	"bytes"
+	"fmt"
 	"image/png"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"weak"
 
@@ -173,6 +175,64 @@ func (m *Menu) Items() []*MenuItem {
 	menuMu.Lock()
 	defer menuMu.Unlock()
 	return append([]*MenuItem(nil), m.items...)
+}
+
+// ActivateMenuItem chooses an item by its visible labels, ignoring & mnemonics.
+// It checks the whole path's visibility and enabled state, then performs the
+// role, checkbox/radio update and Click on the UI thread with win as its owner.
+func ActivateMenuItem(m *Menu, win *Window, path ...string) error {
+	if len(path) == 0 {
+		return fmt.Errorf("mygo: no menu item")
+	}
+	for _, label := range path {
+		if label == "" {
+			return fmt.Errorf("mygo: empty menu path segment")
+		}
+	}
+	var err error
+	onMain(func() {
+		var it *MenuItem
+		it, err = m.itemAtPath(path)
+		if err == nil {
+			menuItemClicked(it.uid, win)
+			runtime.KeepAlive(it)
+		}
+	})
+	return err
+}
+
+func (m *Menu) itemAtPath(path []string) (*MenuItem, error) {
+	menuMu.Lock()
+	defer menuMu.Unlock()
+	if m == nil {
+		return nil, fmt.Errorf("mygo: window has no menu bar")
+	}
+	for i, label := range path {
+		var found *MenuItem
+		for _, it := range m.items {
+			if !it.Hidden && it.Type != MenuItemSeparator && strings.ReplaceAll(it.Label, "&", "") == label {
+				found = it
+				break
+			}
+		}
+		if found == nil {
+			return nil, fmt.Errorf("mygo: no menu item %q", label)
+		}
+		if found.Disabled {
+			return nil, fmt.Errorf("mygo: menu item %q is disabled", label)
+		}
+		if i == len(path)-1 {
+			if found.sub != nil || found.Type == MenuItemSubmenu {
+				return nil, fmt.Errorf("mygo: menu item %q is a submenu", label)
+			}
+			return found, nil
+		}
+		if found.sub == nil {
+			return nil, fmt.Errorf("mygo: menu %q has no submenu", label)
+		}
+		m = found.sub
+	}
+	return nil, fmt.Errorf("mygo: no menu item")
 }
 
 // Append adds items at the end of the menu.

@@ -73,6 +73,7 @@ func init() {
 	// Cocoa, GTK and Win32 all require the UI to live on the thread that
 	// started the process. Keep the main goroutine there.
 	runtime.LockOSThread()
+	platform.Current = backend
 }
 
 var (

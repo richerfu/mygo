@@ -7,6 +7,60 @@ import (
 	"time"
 )
 
+// Device plays interleaved stereo float32 samples at 48 kHz. Write must wait
+// while the output holds enough audio already and must not retain samples.
+// An error closes the device and causes the output to open it again.
+// All calls, including the opener, run on the audio goroutine's locked thread,
+// independently of the application's UI thread.
+type Device interface {
+	Write(samples []float32) error
+	Close()
+}
+
+// OutputOpener opens an output holding about ahead of audio and returns its
+// preferred number of stereo frames per Write (positive on success).
+type OutputOpener func(ahead time.Duration) (Device, int, error)
+
+var customOutput struct {
+	sync.RWMutex
+	open OutputOpener
+}
+
+// UseOutput registers an output opener for subsequent device opens. Call it
+// before playing audio; it does not interrupt a device already open. nil
+// restores the built-in output. Registration is safe from any goroutine.
+// An opener's error uses the normal silent-output retry path, not OS audio.
+func UseOutput(open OutputOpener) {
+	customOutput.Lock()
+	customOutput.open = open
+	customOutput.Unlock()
+}
+
+type customDevice struct{ Device }
+
+func (d customDevice) write(samples []float32) error { return d.Write(samples) }
+func (d customDevice) close()                        { d.Close() }
+
+func newOutput(ahead time.Duration) (device, int, error) {
+	customOutput.RLock()
+	open := customOutput.open
+	customOutput.RUnlock()
+	if open != nil {
+		d, n, err := open(ahead)
+		if err != nil {
+			return nil, 0, err
+		}
+		if d == nil || n <= 0 {
+			if d != nil {
+				d.Close()
+			}
+			return nil, 0, errors.New("audio: output opener returned an invalid device or frame count")
+		}
+		return customDevice{d}, n, nil
+	}
+	return openOutput(ahead)
+}
+
 // A device is the system's audio output, opened by openDevice to hold
 // about ahead of what is heard.
 type device interface {
@@ -68,7 +122,7 @@ func run() {
 			<-wake
 		}
 		lat := outputLatency()
-		dev, n, err := openOutput(lat.ahead())
+		dev, n, err := newOutput(lat.ahead())
 		if err != nil {
 			setErr(err)
 			dev, n = newNullDevice(err != errUnsupported), nullFrames

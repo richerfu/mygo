@@ -1,3 +1,5 @@
+//go:build !mygo_custom_backend && darwin && (arm64 || amd64)
+
 package audio
 
 import (

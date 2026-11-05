@@ -684,6 +684,20 @@ func (h *windowHost) capture() (int, int, []byte) {
 	if s == nil {
 		return 0, 0, nil
 	}
+	if h.gpu != nil {
+		c, ok := h.gpu.(gpu.Capturer)
+		if !ok {
+			c, ok = h.conn.Surface.(gpu.Capturer)
+		}
+		if ok {
+			width, height, rgba, err := c.Capture(s)
+			// Divide before multiplying so even invalid host dimensions
+			// cannot overflow the buffer-size check.
+			if err == nil && width > 0 && height > 0 && width <= len(rgba)/4/height && len(rgba) == width*height*4 {
+				return width, height, rgba
+			}
+		}
+	}
 	var img raster.Image
 	img.Resize(s.Width, s.Height)
 	raster.Render(&img, s)

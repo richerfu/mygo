@@ -47,6 +47,17 @@ type TitleBar struct{ Height, Left, Right int }
 // Color is an 8-bit RGBA color.
 type Color struct{ R, G, B, A uint8 }
 
+// Current returns the process's backend. The core installs this accessor
+// during initialization; calling it initializes the backend on first use.
+var Current func() Backend
+
+// MenuAutomation optionally activates a native menu item by its visible label
+// path. window is the native window handle. Called on the UI thread with a
+// non-empty path and non-empty segments; the backend checks item availability.
+type MenuAutomation interface {
+	ActivateMenuItem(window uintptr, path []string) error
+}
+
 // Backend is implemented by every native backend.
 type Backend interface {
 	// Name identifies the backend, for example "darwin/wkwebview".
