@@ -66,6 +66,7 @@ type MaterialSurface = platform.MaterialSurface
 type MaximizeButtonSurface = platform.MaximizeButtonSurface
 type MediaCommand = platform.MediaCommand
 type Menu = platform.Menu
+type MenuAutomation = platform.MenuAutomation
 type MenuIcon = platform.MenuIcon
 type MenuItem = platform.MenuItem
 type MenuItemType = platform.MenuItemType
@@ -388,6 +389,9 @@ const (
 )
 
 var ErrUnsupported = platform.ErrUnsupported
+
+// ErrSecretNotFound identifies a missing credential in a custom backend.
+var ErrSecretNotFound = platform.ErrSecretNotFound
 
 // Base supplies explicit unsupported implementations of optional services.
 // Hosts override lifecycle, executor, native windows and supported services.

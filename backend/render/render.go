@@ -8,5 +8,6 @@ import (
 )
 
 type Renderer = gpu.Renderer
+type Capturer = gpu.Capturer
 type Factory = gpu.RendererFactory
 type Scene = scene.Scene

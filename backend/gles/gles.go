@@ -14,6 +14,27 @@ type Context interface {
 	Identity() uintptr
 }
 
+// Presenter copies software-rendered, premultiplied BGRA pixels into the
+// current framebuffer. The host owns the context and presents the framebuffer.
+type Presenter = gl.Presenter
+
+// NewPresenter prepares a software-frame presenter with c current.
+func NewPresenter(c Context) (*Presenter, error) {
+	if err := gl.UseContext(c.Resolve, c.Identity); err != nil {
+		return nil, err
+	}
+	return gl.NewPresenter()
+}
+
+// ReadFramebuffer reads the current framebuffer as tightly packed,
+// premultiplied BGRA rows, starting at the top. c must be current.
+func ReadFramebuffer(c Context, width, height int) ([]byte, error) {
+	if err := gl.UseContext(c.Resolve, c.Identity); err != nil {
+		return nil, err
+	}
+	return gl.ReadFramebuffer(width, height)
+}
+
 func New(c Context, retained bool) (render.Renderer, error) {
 	if err := gl.UseContext(c.Resolve, c.Identity); err != nil {
 		return nil, err

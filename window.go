@@ -1266,6 +1266,13 @@ func (w *Window) SetMenu(m *Menu) {
 	})
 }
 
+// Menu returns this window's menu, or nil if it uses the application menu.
+func (w *Window) Menu() *Menu {
+	var m *Menu
+	onMain(func() { m = w.menu })
+	return m
+}
+
 // SetAutoHideMenuBar keeps the menu bar of this window out of sight until
 // the user presses Alt or F10, or shows it for good again (Linux,
 // Windows). See WindowOptions.AutoHideMenuBar.

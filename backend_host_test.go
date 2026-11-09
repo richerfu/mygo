@@ -5,12 +5,14 @@ package mygo
 import (
 	"errors"
 	"fmt"
-	"github.com/egoist/mygo/internal/fake"
-	"github.com/egoist/mygo/internal/platform"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+
+	nativebackend "github.com/egoist/mygo/backend"
+	"github.com/egoist/mygo/internal/fake"
+	"github.com/egoist/mygo/internal/platform"
 )
 
 type hostedTestBackend struct {
@@ -18,6 +20,13 @@ type hostedTestBackend struct {
 	handler platform.AppHandler
 	stopped func()
 	fail    bool
+}
+
+func (b *hostedTestBackend) ActivateMenuItem(window uintptr, path []string) error {
+	if !b.IsMainThread() || window != 42 || len(path) != 2 || path[0] != "File" || path[1] != "Open" {
+		return errors.New("incorrect menu dispatch")
+	}
+	return nil
 }
 
 func (b *hostedTestBackend) Init(h platform.AppHandler, o platform.AppOptions) error {
@@ -38,6 +47,10 @@ func hostedTestHelper() {
 	if err := UseBackend(b); err != nil {
 		panic(err)
 	}
+	menus, ok := platform.Current().(nativebackend.MenuAutomation)
+	if !ok {
+		panic("installed backend lost optional menu automation")
+	}
 	quits := 0
 	App.OnQuit(func() { quits++ })
 	err := App.Run()
@@ -48,6 +61,9 @@ func hostedTestHelper() {
 	} else {
 		if err != nil || App.ended || quits != 0 || !App.IsReady() {
 			panic("hosted Run finished the live application")
+		}
+		if err := menus.ActivateMenuItem(42, []string{"File", "Open"}); err != nil {
+			panic(err)
 		}
 		b.stopped()
 		b.stopped()
@@ -73,5 +89,58 @@ func TestHostedBackendLifecycle(t *testing.T) {
 func TestBackendCannotBeReplacedAfterFirstUse(t *testing.T) {
 	if err := UseBackend(fake.New()); err == nil {
 		t.Fatal("replaced a running backend")
+	}
+}
+
+func TestBackendMenuModelActivation(t *testing.T) {
+	w, _ := testWindow(t, WindowOptions{})
+	if w.Menu() != nil {
+		t.Fatal("new window has an explicit menu")
+	}
+	clicks := 0
+	check := &MenuItem{Label: "&Check", Type: MenuItemCheckbox, Click: func(it *MenuItem, win *Window) {
+		if !fb.IsMainThread() || win != w || !it.IsChecked() {
+			t.Error("click lost its UI thread, owner, or checkbox state")
+		}
+		clicks++
+	}}
+	m := NewMenu([]*MenuItem{{Label: "&File", Submenu: []*MenuItem{
+		check,
+		{Label: "Minimize", Role: RoleMinimize},
+		{Label: "Disabled", Disabled: true, Click: func(*MenuItem, *Window) { t.Error("disabled item clicked") }},
+		{Label: "Hidden", Hidden: true},
+	}}})
+	w.SetMenu(m)
+	if w.Menu() != m {
+		t.Fatal("window menu accessor lost its menu")
+	}
+	if err := ActivateMenuItem(m, w, "File", "Check"); err != nil || clicks != 1 {
+		t.Fatalf("checkbox: clicks=%d err=%v", clicks, err)
+	}
+	if err := ActivateMenuItem(m, w, "File", "Minimize"); err != nil || !w.IsMinimized() {
+		t.Fatalf("role: minimized=%v err=%v", w.IsMinimized(), err)
+	}
+	for _, tc := range []struct {
+		path []string
+		want string
+	}{
+		{nil, "no menu item"},
+		{[]string{"File", ""}, "empty menu path segment"},
+		{[]string{"Missing"}, `no menu item "Missing"`},
+		{[]string{"File"}, `"File" is a submenu`},
+		{[]string{"File", "Disabled"}, `"Disabled" is disabled`},
+		{[]string{"File", "Hidden"}, `no menu item "Hidden"`},
+		{[]string{"File", "Check", "Child"}, `"Check" has no submenu`},
+	} {
+		if err := ActivateMenuItem(m, w, tc.path...); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("path %q: %v, want %s", tc.path, err, tc.want)
+		}
+	}
+	m.Items()[0].SetEnabled(false)
+	if err := ActivateMenuItem(m, w, "File", "Check"); err == nil || clicks != 1 {
+		t.Fatalf("disabled parent: clicks=%d err=%v", clicks, err)
+	}
+	if err := ActivateMenuItem(nil, w, "File"); err == nil || !strings.Contains(err.Error(), "no menu bar") {
+		t.Fatalf("missing menu: %v", err)
 	}
 }
