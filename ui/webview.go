@@ -1,12 +1,12 @@
 package ui
 
 import (
-	"math"
 	"slices"
 
 	"github.com/egoist/mygo/internal/platform"
 	"github.com/egoist/mygo/internal/scene"
 	"github.com/egoist/mygo/internal/surface"
+	"github.com/egoist/mygo/internal/viewhost"
 )
 
 // NativeWebView is a web view a window made for its content to show,
@@ -46,12 +46,129 @@ func coreWebView(c *context, v NativeWebView) *node {
 	return e
 }
 
-// webPlace is where a frame shows a web view: hit is the index of its
-// element's own hit, inert that it shows but takes no pointer.
+// NativeView shows a view of the platform, a value of a native module's
+// interface that embeds native.View (an NSView on macOS), in the element's
+// content box, as WebView shows a web view: it has no size of its own and
+// takes its size from layout, it is cut to the element's Radius, and what
+// paints after it shows over it, its children first. Make the view once,
+// outside the view function, and show it from there:
+//
+//	ui.NativeView(c, app.player).Fill().Children(func() {
+//		ui.Text(c, caption).Absolute().Left(24).Bottom(24)
+//	})
+//
+// The view takes the pointer where it shows, and the keyboard once
+// clicked or tabbed into, as any view of the platform. A view the frame
+// does not build hides and keeps its state; one closed leaves the window.
+// Where views of the platform cannot show, as in browsers, the element
+// shows nothing.
+//
+// v is nil where the module has no implementation, its constructor having
+// returned errors.ErrUnsupported: the element is then a plain box, which
+// paints its background and children, so a view can show something else
+// in the view's place.
+func coreNativeView(c *context, v PlatformView) *node {
+	var h uintptr
+	if v != nil {
+		h = v.NativeView()
+	}
+	if h == 0 {
+		// No implementation, or closed.
+		e := coreBox(c)
+		e.self = Stretch
+		return e
+	}
+	rt := c.rt
+	var pv *platformView
+	for _, p := range rt.platformViews {
+		// One gone may have had the address of a view made since.
+		if p.h == h && !p.gone {
+			pv = p
+			break
+		}
+	}
+	if pv == nil {
+		pv = &platformView{h: h}
+		rt.platformViews = append(rt.platformViews, pv)
+	}
+	return coreWebView(c, pv)
+}
+
+// PlatformView is a view of the platform, which NativeView shows: a value
+// of a native module's interface that embeds native.View.
+type PlatformView interface {
+	// NativeView returns the view, an NSView* on macOS, or 0 once it is
+	// closed.
+	NativeView() uintptr
+}
+
+// platformView stands for a view of the platform in the window of an
+// engine, which places it as it places web views: the surface hosts it
+// (viewhost.Embed, which package native sets) the first time a frame
+// shows it. It holds the view by its handle, not the Go value: a view the
+// app lets go of is released, which tells the window (gone).
+type platformView struct {
+	h     uintptr
+	embed platform.WebView
+	conn  *surface.Conn
+	gone  bool
+}
+
+// SurfaceWebView puts the view under the surface of conn, the first time,
+// and returns what stands for it there. Main thread only.
+func (p *platformView) SurfaceWebView(conn *surface.Conn) platform.WebView {
+	if p.gone {
+		return nil
+	}
+	if p.embed != nil && p.conn == conn {
+		return p.embed
+	}
+	if viewhost.Embed == nil {
+		return nil
+	}
+	e := viewhost.Embed(conn.Surface, p.h, p.leave)
+	if e == nil {
+		return nil
+	}
+	if p.embed != nil {
+		p.embed.Close()
+	}
+	p.embed, p.conn = e, conn
+	return e
+}
+
+// leave takes the view out of the window, as it is closed or released.
+// Main thread only.
+func (p *platformView) leave() {
+	p.gone = true
+	if p.embed != nil {
+		p.embed.Close()
+		p.embed = nil
+	}
+}
+
+// pruneViews forgets the views of the platform that are gone.
+func (rt *engine) pruneViews() {
+	kept := rt.platformViews[:0]
+	for _, pv := range rt.platformViews {
+		if !pv.gone {
+			kept = append(kept, pv)
+		}
+	}
+	clear(rt.platformViews[len(kept):])
+	rt.platformViews = kept
+}
+
+// webPlace is where a frame shows a web view: size is the size its page
+// lays out at, which frame shows scaled, and radii its corners', in its
+// DIPs; hit is the index of its element's own hit, inert that it shows
+// but takes no pointer.
 type webPlace struct {
 	v     NativeWebView
 	frame Rect
 	clip  Rect
+	size  [2]float32
+	radii [4]float32
 	hit   int
 	inert bool
 }
@@ -63,26 +180,93 @@ func (rt *engine) noteWebView(e *node, clip Rect, invisible bool) {
 	if e.flags&flagInvisible != 0 || rt.commitHidden {
 		return
 	}
-	// The hole the painter makes: the content box on whole pixels. Native
-	// web views stay upright, covering a transformed box's bounds.
-	b := e.visualRect(e.contentBox())
-	if s := rt.painted[2]; s > 0 {
-		x0, y0 := float32(math.Round(float64(b.X*s)))/s, float32(math.Round(float64(b.Y*s)))/s
-		x1, y1 := float32(math.Round(float64((b.X+b.W)*s)))/s, float32(math.Round(float64((b.Y+b.H)*s)))/s
-		b = Rect{x0, y0, x1 - x0, y1 - y0}
+	// The hole the painter makes: the content box on whole pixels,
+	// rounded as its border's inner edge.
+	s := rt.painted[2]
+	if s <= 0 {
+		s = 1
+	}
+	box := e.contentBox()
+	sx, sy, upright := scaling(e.world)
+	var b, page Rect
+	if upright && (sx != 1 || sy != 1) {
+		// Scaled, as a panel zooming in: the page keeps its layout and
+		// shows scaled, as the painter scales the hole, on whole pixels
+		// before the transform.
+		page = snapPixels(box, s)
+		page = Rect{page.X / s, page.Y / s, page.W / s, page.H / s}
+		b = Rect{sx*page.X + e.world.X, sy*page.Y + e.world.Y, sx * page.W, sy * page.H}
+	} else {
+		// Turned, skewed or in perspective, a native web view stays
+		// upright, covering the transformed box's bounds, at their size.
+		b = snapPixels(e.visualRect(box), s)
+		b = Rect{b.X / s, b.Y / s, b.W / s, b.H / s}
+		page = b
 	}
 	v := intersect(b, clip)
 	if b.W <= 0 || b.H <= 0 || v.W <= 0 || v.H <= 0 {
 		return
 	}
-	rt.webPlaces = append(rt.webPlaces, webPlace{v: e.webView, frame: b, clip: v, hit: len(rt.hits), inert: invisible})
+	wp := webPlace{v: e.webView, frame: b, clip: v, size: [2]float32{page.W, page.H}, hit: len(rt.hits), inert: invisible}
+	if upright {
+		wp.radii = holeRadii(e, s)
+		for i := range wp.radii {
+			wp.radii[i] /= s
+		}
+	}
+	rt.webPlaces = append(rt.webPlaces, wp)
 }
 
 // placedWebView is where a frame shows a web view, for the host.
 type placedWebView struct {
 	v           NativeWebView
 	frame, clip platform.RectF
-	covers      []platform.RectF
+	// size is the size the page lays out at, and radii its corners', in
+	// its DIPs (platform.WebViewPlacement).
+	size   [2]float64
+	radii  [4]float64
+	covers []platform.RectF
+}
+
+// placement returns v as the platform takes it.
+func (v *placedWebView) placement(n platform.WebView) platform.WebViewPlacement {
+	return platform.WebViewPlacement{WebView: n, Frame: v.frame, Clip: v.clip, Width: v.size[0], Height: v.size[1], Radii: v.radii, Covers: v.covers}
+}
+
+// scaling returns the scale of m, which only moves and scales, by
+// positive factors; ok is false for any other transform.
+func scaling(m scene.Affine) (x, y float32, ok bool) {
+	if !m.Set {
+		return 1, 1, true
+	}
+	if m.B != 0 || m.C != 0 || m.G != 0 || m.H != 0 || m.A <= 0 || m.D <= 0 {
+		return 0, 0, false
+	}
+	return m.A, m.D, true
+}
+
+// snapPixels returns r at scale pixels per DIP, on whole pixels.
+func snapPixels(r Rect, scale float32) Rect {
+	x0, y0 := round(r.X*scale), round(r.Y*scale)
+	x1, y1 := round((r.X+r.W)*scale), round((r.Y+r.H)*scale)
+	return Rect{x0, y0, x1 - x0, y1 - y0}
+}
+
+// holeRadii returns the radii of the corners of the hole showing the web
+// view of e, in pixels at scale pixels per DIP: its border's inner edge
+// less its padding.
+func holeRadii(e *node, scale float32) [4]float32 {
+	in := [4]float32{e.border[0] + e.pad[0], e.border[1] + e.pad[1], e.border[2] + e.pad[2], e.border[3] + e.pad[3]}
+	box := snapPixels(Rect{e.x, e.y, e.w, e.h}, scale)
+	px := func(r [4]float32) [4]float32 {
+		return [4]float32{r[0] * scale, r[1] * scale, r[2] * scale, r[3] * scale}
+	}
+	sb := scene.Rect{X: box.X, Y: box.Y, W: box.W, H: box.H}
+	_, radii := scene.InnerRadii(sb, scene.Corners(sb, px(e.radius), continuousCorners), px(in))
+	for i := range radii {
+		radii[i] = abs32(radii[i])
+	}
+	return radii
 }
 
 // webViewPlacements returns where the frame shows its web views, in the
@@ -101,14 +285,19 @@ func (rt *engine) webViewPlacements() []placedWebView {
 			// The inert one went first: this one takes its place.
 			out = slices.DeleteFunc(out, func(o placedWebView) bool { return o.v == wp.v })
 		}
-		out = append(out, placedWebView{v: wp.v, frame: rectF(wp.frame), clip: rectF(wp.clip), covers: wp.covers(rt.hits)})
+		pv := placedWebView{v: wp.v, frame: rectF(wp.frame), clip: rectF(wp.clip), covers: wp.covers(rt.hits)}
+		pv.size = [2]float64{float64(wp.size[0]), float64(wp.size[1])}
+		for i, r := range wp.radii {
+			pv.radii[i] = float64(r)
+		}
+		out = append(out, pv)
 	}
 	rt.webOut = out
 	return out
 }
 
 // covers returns the boxes, within the web view's clip, of the hits after
-// its own: those inside a box already found add nothing.
+// its own, as they show: those inside a box already found add nothing.
 func (wp *webPlace) covers(hits []hit) []platform.RectF {
 	if wp.inert {
 		return []platform.RectF{rectF(wp.clip)}
@@ -120,7 +309,11 @@ func (wp *webPlace) covers(hits []hit) []platform.RectF {
 	}
 next:
 	for _, h := range hits[start:] {
-		r := intersect(h.r, wp.clip)
+		r := h.r
+		if h.st != nil {
+			r = transformRect(h.st.world, r)
+		}
+		r = intersect(r, wp.clip)
 		if r.W <= 0 || r.H <= 0 {
 			continue
 		}
@@ -141,6 +334,9 @@ func rectF(r Rect) platform.RectF {
 
 // placeWebViews tells the host where the frame shows its web views.
 func (rt *engine) placeWebViews() {
+	if len(rt.platformViews) > 0 {
+		rt.pruneViews()
+	}
 	if len(rt.webPlaces) == 0 && !rt.webShown {
 		return
 	}
@@ -197,13 +393,13 @@ func (rt *engine) webViewKey(v NativeWebView, mods Modifiers, key, physical Key,
 	if id == 0 {
 		return // no element shows it now
 	}
-	rt.redraw = false
+	rt.buildNext()
 	rt.input = true
 	if rt.focused != id {
 		rt.focused = id
 		rt.focusVisible = false
 	}
-	rt.keyDownPhysical(mods, key, physical, repeat)
+	rt.keyDownPhysical(mods, key, physical, CodeUnknown, repeat)
 	rt.updateTextInput()
 }
 
@@ -237,12 +433,7 @@ func (p *Painter) hole(e *node) {
 	if b.W <= 0 || b.H <= 0 {
 		return
 	}
-	in := [4]float32{e.border[0] + e.pad[0], e.border[1] + e.pad[1], e.border[2] + e.pad[2], e.border[3] + e.pad[3]}
-	box := p.snap(Rect{e.x, e.y, e.w, e.h})
-	_, radii := scene.InnerRadii(box, scene.Corners(box, p.radii(e.radius), continuousCorners), p.radii(in))
-	for i := range radii {
-		radii[i] = abs32(radii[i])
-	}
+	radii := holeRadii(e, p.scale)
 	r := p.snap(b)
 	// Translucent, the page blends over what was painted under it.
 	p.add(scene.Op{Kind: scene.OpHole, Rect: r, Radii: radii, Continuous: continuousCorners, Opacity: p.opacity})

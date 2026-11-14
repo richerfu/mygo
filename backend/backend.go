@@ -401,3 +401,24 @@ func KeyForRune(r rune) Key { return platform.KeyForRune(r) }
 
 // HostedBackend is the optional external event-loop lifetime contract.
 type HostedBackend = platform.HostedBackend
+
+// Optional platform contracts remain available to external backends.
+type AccessLineBox = platform.AccessLineBox
+type AccessPopup = platform.AccessPopup
+type AccessCurrent = platform.AccessCurrent
+type AccessAutoComplete = platform.AccessAutoComplete
+type TextSelectionChange = platform.TextSelectionChange
+type ClientCertificate = platform.ClientCertificate
+type ClientCertificateRequest = platform.ClientCertificateRequest
+type ClientCertificateResponse = platform.ClientCertificateResponse
+type HeldKeys = platform.HeldKeys
+type KeyCode = platform.KeyCode
+type InputRegionWindow = platform.InputRegionWindow
+type StyleBackend = platform.StyleBackend
+type WindowButtonsBackend = platform.WindowButtonsBackend
+type LaterClipboard = platform.LaterClipboard
+type PointerAccuracy = platform.PointerAccuracy
+type GlassPlacement = platform.GlassPlacement
+type ViewSurface = platform.ViewSurface
+type GlassSurface = platform.GlassSurface
+type PointerKind = platform.PointerKind

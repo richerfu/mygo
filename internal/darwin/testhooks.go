@@ -50,6 +50,23 @@ func TestMenuItemEnabled(path ...string) (enabled bool, err error) {
 	return enabled, err
 }
 
+// TestMenuItemSubtitle returns the title and the subtitle of an item of the
+// application menu, found by its title as TestPerformMenuItem finds it.
+func TestMenuItemSubtitle(path ...string) (title, subtitle string, err error) {
+	withPool(func() {
+		var menu id
+		var index int
+		if menu, index, err = menuItemAt(path); err == nil {
+			item := send(menu, "itemAtIndex:", uintptr(index))
+			title = goString(send(item, "title"))
+			if respondsTo(item, "subtitle") {
+				subtitle = goString(send(item, "subtitle"))
+			}
+		}
+	})
+	return title, subtitle, err
+}
+
 // menuItemAt finds an item of the application menu by the titles along
 // its path, and returns its menu and its index there.
 func menuItemAt(path []string) (menu id, index int, err error) {
@@ -138,6 +155,24 @@ func TestClick(handle uintptr, x, y float64) { testClick(handle, x, y, false) }
 // handled the click when it returns (handlePosted).
 func TestAppClick(handle uintptr, x, y float64) { testClick(handle, x, y, true) }
 
+// TestHitView returns the class of the view a window hit-tests at (x, y)
+// of its content, in DIPs from its top left.
+func TestHitView(handle uintptr, x, y float64) (cls string) {
+	w := theBackend.byNSWindow[id(handle)]
+	if w == nil {
+		return ""
+	}
+	withPool(func() {
+		content := send(w.win, "contentView")
+		b := msgRect(content, sel("bounds"))
+		hit := msgHitTest(content, sel("hitTest:"), NSPoint{X: x, Y: b.Size.Height - y})
+		if hit != 0 {
+			cls = goString(send(hit, "className"))
+		}
+	})
+	return cls
+}
+
 // TestAppPress is half of TestAppClick: the left mouse down, or the up,
 // which a user's click handles apart, a frame or more later.
 func TestAppPress(handle uintptr, x, y float64, down bool) {
@@ -146,6 +181,78 @@ func TestAppPress(handle uintptr, x, y float64, down bool) {
 		typ = 1 // NSEventTypeLeftMouseDown
 	}
 	testMouse(handle, x, y, true, typ)
+}
+
+// TestPostMouse presses (down) or releases the primary button at (x, y)
+// on screen, in MyGo's coordinates (top-left origin), as the user's mouse
+// does: through the window server, to whatever shows there, the menu
+// bar's items too. It reports false where the process may not post events
+// (Accessibility).
+func TestPostMouse(x, y float64, down bool) bool {
+	testPostOnce.Do(func() {
+		purego.RegisterLibFunc(&cgPreflightPostEventAccess, libCG, "CGPreflightPostEventAccess")
+		purego.RegisterLibFunc(&cgEventCreateMouseEvent, libCG, "CGEventCreateMouseEvent")
+		purego.RegisterLibFunc(&cgEventPost, libCG, "CGEventPost")
+	})
+	if !cgPreflightPostEventAccess() {
+		return false
+	}
+	typ := uint32(2) // kCGEventLeftMouseUp
+	if down {
+		typ = 1 // kCGEventLeftMouseDown
+	}
+	ev := cgEventCreateMouseEvent(0, typ, NSPoint{x, y}, 0) // kCGMouseButtonLeft
+	if ev == 0 {
+		return false
+	}
+	cgEventPost(0, ev) // kCGHIDEventTap
+	cfRelease(ev)
+	return true
+}
+
+var (
+	testPostOnce               sync.Once
+	cgPreflightPostEventAccess func() bool
+	cgEventCreateMouseEvent    func(source uintptr, typ uint32, at NSPoint, button uint32) uintptr
+	cgEventPost                func(tap uint32, ev uintptr)
+)
+
+// TestMouseButtons returns how many presses and releases of the primary
+// button the application took from the window server since the first
+// call, which starts counting them: a test that posts them with
+// TestPostMouse waits for them so.
+func TestMouseButtons() (downs, ups int) {
+	if testButtons == 0 {
+		blk := newBlock(func(_ objc.Block, ev id) id {
+			if sendInt(ev, "type") == 1 { // NSEventTypeLeftMouseDown
+				testDowns++
+			} else {
+				testUps++
+			}
+			return ev
+		})
+		testButtons = retain(send(class("NSEvent"), "addLocalMonitorForEventsMatchingMask:handler:", 1<<1|1<<2, uintptr(blk)))
+	}
+	return testDowns, testUps
+}
+
+// testButtons is TestMouseButtons's monitor, counting into testDowns and
+// testUps. Main thread only.
+var (
+	testButtons        id
+	testDowns, testUps int
+)
+
+// TestClosePopover asks a flyout's popover to close as AppKit asks a
+// transient one as the user presses outside it (performClose:), and
+// reports whether it has one.
+func TestClosePopover(handle uintptr) bool {
+	w := theBackend.byNSWindow[id(handle)]
+	if w == nil || w.popover == 0 {
+		return false
+	}
+	send(w.popover, "performClose:", 0)
+	return true
 }
 
 func testClick(handle uintptr, x, y float64, viaApp bool) {
@@ -513,6 +620,41 @@ func TestSetWindowAppearance(handle uintptr, dark bool) {
 	})
 }
 
+// TestPopoverAppearance returns the explicit popover chrome appearance and
+// the effective appearances of its window/content, including the arrow's host.
+func TestPopoverAppearance(handle uintptr) (chrome, window, content string) {
+	w := theBackend.byNSWindow[id(handle)]
+	if w == nil || w.popover == 0 {
+		return
+	}
+	name := func(object id, property string) string {
+		a := send(object, property)
+		if a == 0 {
+			return ""
+		}
+		return goString(send(a, "bestMatchFromAppearancesWithNames:", uintptr(nsArray(nsString("NSAppearanceNameAqua"), nsString("NSAppearanceNameDarkAqua")))))
+	}
+	return name(w.popover, "appearance"), name(w.win, "effectiveAppearance"), name(w.view, "effectiveAppearance")
+}
+
+// TestSetPopoverAnchorAppearance models a status item's contrast appearance,
+// which can differ from the application's own theme over desktop wallpaper.
+func TestSetPopoverAnchorAppearance(handle uintptr, dark bool) {
+	w := theBackend.byNSWindow[id(handle)]
+	if w == nil {
+		return
+	}
+	view, _, _ := w.popoverAnchor()
+	if view == 0 {
+		return
+	}
+	name := "NSAppearanceNameAqua"
+	if dark {
+		name = "NSAppearanceNameDarkAqua"
+	}
+	send(view, "setAppearance:", uintptr(send(class("NSAppearance"), "appearanceNamed:", uintptr(nsString(name)))))
+}
+
 // TestWebViewAttached reports whether a window's web view is in its view
 // hierarchy.
 func TestWebViewAttached(handle uintptr) bool {
@@ -624,6 +766,12 @@ func TestPageGestures(handle uintptr, webView int) (swipe, pinch, ok bool) {
 	return sendBool(w.web, "allowsBackForwardNavigationGestures"), sendBool(w.web, "allowsMagnification"), true
 }
 
+// TestActivate brings the application in front, as clicking its Dock icon
+// does.
+func TestActivate() {
+	withPool(func() { send(theBackend.app, "activateIgnoringOtherApps:", 1) })
+}
+
 // TestIsFrontmost reports whether the application is the frontmost one,
 // which NSApp's isActive does not tell while a nonactivating panel is the
 // key window: it reports the app active then.
@@ -674,6 +822,78 @@ func TestMaterialState(handle uintptr) int {
 	return sendInt(w.effect, "state")
 }
 
+// TestGlassTint returns the glass's tint, in sRGB, and 0, 0, 0, 0 when it
+// has none or the window has no glass.
+func TestGlassTint(handle uintptr) (red, green, blue, alpha float64) {
+	w := theBackend.byNSWindow[id(handle)]
+	if w == nil || w.effect == 0 || !w.glass {
+		return 0, 0, 0, 0
+	}
+	withPool(func() {
+		c := send(w.effect, "tintColor")
+		if c == 0 {
+			return
+		}
+		c = send(c, "colorUsingColorSpace:", uintptr(send(class("NSColorSpace"), "sRGBColorSpace")))
+		if c == 0 {
+			return
+		}
+		red, green, blue, alpha = msgFloat(c, sel("redComponent")), msgFloat(c, sel("greenComponent")),
+			msgFloat(c, sel("blueComponent")), msgFloat(c, sel("alphaComponent"))
+	})
+	return red, green, blue, alpha
+}
+
+// TestNativeGlassSupported reports whether windows show the system's
+// glass: the system has Liquid Glass and does not reduce transparency, as
+// GitHub's macOS runners do.
+func TestNativeGlassSupported() (ok bool) {
+	if !hasClass("NSGlassEffectView") {
+		return false
+	}
+	withPool(func() { ok = !sendBool(workspace(), "accessibilityDisplayShouldReduceTransparency") })
+	return ok
+}
+
+// TestNativeGlass returns the first system's glass view of a window's
+// native content: its class, frame in its view's coordinates, and style.
+func TestNativeGlass(handle uintptr) (class string, frame [4]float64, style int, ok bool) {
+	w := theBackend.byNSWindow[id(handle)]
+	if w == nil || w.surface == nil {
+		return "", frame, 0, false
+	}
+	for _, v := range w.surface.glass {
+		r := msgRect(v, sel("frame"))
+		return goString(send(v, "className")), [4]float64{r.Origin.X, r.Origin.Y, r.Size.Width, r.Size.Height}, sendInt(v, "style"), true
+	}
+	return "", frame, 0, false
+}
+
+// TestNativeGlassTint returns the first system's glass view of a window's
+// native content tint, in sRGB.
+func TestNativeGlassTint(handle uintptr) (red, green, blue, alpha float64) {
+	w := theBackend.byNSWindow[id(handle)]
+	if w == nil || w.surface == nil {
+		return 0, 0, 0, 0
+	}
+	for _, v := range w.surface.glass {
+		withPool(func() {
+			c := send(v, "tintColor")
+			if c == 0 {
+				return
+			}
+			c = send(c, "colorUsingColorSpace:", uintptr(send(class("NSColorSpace"), "sRGBColorSpace")))
+			if c == 0 {
+				return
+			}
+			red, green, blue, alpha = msgFloat(c, sel("redComponent")), msgFloat(c, sel("greenComponent")),
+				msgFloat(c, sel("blueComponent")), msgFloat(c, sel("alphaComponent"))
+		})
+		return red, green, blue, alpha
+	}
+	return 0, 0, 0, 0
+}
+
 // TestRoundedBacking reports whether a window is opaque, and the alpha and
 // red, in sRGB, of its content view's background, which fills its rounded
 // corners' inside.
@@ -695,6 +915,23 @@ func TestRoundedBacking(handle uintptr) (opaque bool, alpha, red float64) {
 		}
 	})
 	return opaque, alpha, red
+}
+
+// TestWindowBacking reports whether a window is opaque, and the alpha of
+// its background color, in sRGB.
+func TestWindowBacking(handle uintptr) (opaque bool, alpha float64) {
+	w := theBackend.byNSWindow[id(handle)]
+	if w == nil {
+		return false, 0
+	}
+	opaque = sendBool(w.win, "isOpaque")
+	withPool(func() {
+		c := send(send(w.win, "backgroundColor"), "colorUsingColorSpace:", uintptr(send(class("NSColorSpace"), "sRGBColorSpace")))
+		if c != 0 {
+			alpha = msgFloat(c, sel("alphaComponent"))
+		}
+	})
+	return opaque, alpha
 }
 
 // TestDockInspector opens the web inspector of a window docked to it, and
@@ -998,6 +1235,34 @@ func TestComposeOver(handle uintptr, text string, caret int, commit bool, from, 
 	return true
 }
 
+// TestKeyComposing presses the key of virtual key code code, typing chars,
+// in a window showing native UI, with the test standing in for the input
+// method that interprets it: the input method inserts commit, unless it
+// is empty, then asks for the key's command (doCommandBySelector:), unless
+// command is empty. The Korean input method takes Return so while it
+// composes: it commits the syllable and asks for insertNewline:. The
+// Japanese one commits the candidate and asks for nothing. It reports
+// false for a window showing a web page.
+func TestKeyComposing(handle uintptr, code uint16, chars, commit, command string) bool {
+	w := theBackend.byNSWindow[id(handle)]
+	if w == nil || w.surface == nil {
+		return false
+	}
+	loadTestInput()
+	interpret := interpretKeys
+	defer func() { interpretKeys = interpret }()
+	interpretKeys = func(view, ev id) {
+		if commit != "" {
+			msgInsertText(view, sel("insertText:replacementRange:"), nsString(commit), nsRange{Location: nsNotFound})
+		}
+		if command != "" {
+			send(view, "doCommandBySelector:", uintptr(sel(command)))
+		}
+	}
+	sendKeyToWindow(w, code, chars, false)
+	return true
+}
+
 // TestInputClient returns what a window's surface tells input methods: the
 // selected range and the whole text of their document.
 func TestInputClient(handle uintptr) (selected [2]int, document string) {
@@ -1114,7 +1379,10 @@ type TestAccessNode struct {
 	Focused  bool
 	Depth    int
 	Children int
-	obj      id
+	// Index is a row's place among its table's rows, from 0, and
+	// RowCount how many rows a table has, through the newer API.
+	Index, RowCount int
+	obj             id
 }
 
 // TestAccessibility reads the elements of a window showing native UI as
@@ -1138,6 +1406,10 @@ func TestAccessibility(handle uintptr) []TestAccessNode {
 					Depth:    depth,
 					Children: len(kids),
 					obj:      obj,
+				}
+				// Ours, not a page's elements, which may not answer them.
+				if theBackend.byAccess[obj] != nil {
+					n.Index, n.RowCount = sendInt(obj, "accessibilityIndex"), sendInt(obj, "accessibilityRowCount")
 				}
 				if v := send(obj, "accessibilityValue"); v != 0 {
 					n.Value = goString(send(v, "description"))
@@ -1527,6 +1799,15 @@ func TestWindowPixels(handle uintptr) (img *image.RGBA, ok bool) {
 		copy(img.Pix[row*img.Stride:], full.Pix[full.PixOffset(r.Min.X, r.Min.Y+row):full.PixOffset(r.Max.X, r.Min.Y+row)])
 	}
 	return img, true
+}
+
+// TestPauseFrames has the surface of a window's native UI take its last
+// frame for one long past, as on a runner slow enough that a frame asked
+// for comes after a pause (RequestFrame), whatever the machine's speed.
+func TestPauseFrames(handle uintptr) {
+	if w := theBackend.byNSWindow[id(handle)]; w != nil && w.surface != nil {
+		w.surface.lastFrame = time.Time{}
+	}
 }
 
 // TestDrawablesTrimmed reports whether the GPU renderer of a window's

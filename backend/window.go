@@ -126,3 +126,8 @@ func (*WindowBase) PrintToPDF(p0 PDFOptions, p1 func(pdf []byte, err error)) {
 }
 func (*WindowBase) DroppedFiles() []string { var r0 []string; return r0 }
 func (*WindowBase) Print()                 {}
+
+func (*WindowBase) GPUProcessID() int { return 0 }
+
+func (*WindowBase) IgnoresMouseEvents() bool { return false }
+func (*WindowBase) SetVibrancyTint(*Color)   {}
