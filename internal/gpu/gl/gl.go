@@ -261,12 +261,12 @@ func (r *Renderer) init() error {
 		header += "precision highp float;\nprecision highp int;\n"
 	}
 	r.header = header
-	vs, err := compile(glVertexShader, header+"#define VERTEX\n"+shaderSource)
+	vs, err := compile(glVertexShader, header+"#define VERTEX\n"+sceneShaderSource())
 	if err != nil {
 		return err
 	}
 	defer glDeleteShader(vs)
-	fs, err := compile(glFragmentShader, header+"#define FRAGMENT\n"+shaderSource)
+	fs, err := compile(glFragmentShader, header+"#define FRAGMENT\n"+sceneShaderSource())
 	if err != nil {
 		return err
 	}
@@ -328,7 +328,7 @@ func (r *Renderer) effectProgram(e *scene.Effect) *effectProgram {
 		r.effects = map[*scene.Effect]*effectProgram{}
 	}
 	r.effects[e] = p
-	p.program, p.err = link(r.header+"#define VERTEX\n"+shaderSource, r.header+EffectSource(e.GLSL))
+	p.program, p.err = link(r.header+"#define VERTEX\n"+sceneShaderSource(), r.header+colorEffectSource(e.GLSL))
 	if p.err != nil {
 		p.err = fmt.Errorf("gl: the effect %s: %w", e.Name, p.err)
 		fmt.Fprintln(os.Stderr, p.err)
@@ -628,7 +628,7 @@ func (r *Renderer) elementTexture(img *scene.Image, s *scene.Surface) uintptr {
 	if texture := r.videoTexture(img, s); texture != 0 {
 		return texture
 	}
-	return r.uploadedElementTexture(img, s)
+	return r.fallbackElementTexture(img, s)
 }
 
 func (r *Renderer) uploadedElementTexture(img *scene.Image, s *scene.Surface) uintptr {
@@ -677,7 +677,12 @@ func (r *Renderer) chromaTexture(img *scene.Image) uintptr {
 // device pixels.
 func (r *Renderer) Render(s *scene.Scene) (err error) {
 	if directVideo {
-		defer func() { err = r.endVideoFrame(err) }()
+		defer func() {
+			err = r.endVideoFrame(err)
+			if err != nil {
+				r.Invalidate()
+			}
+		}()
 	}
 	if s.Width <= 0 || s.Height <= 0 {
 		return nil
@@ -811,7 +816,7 @@ func (r *Renderer) drawCanvas(c *scene.Image) error {
 			delete(r.canvasTex, t.tex)
 			glDeleteTextures(1, &t.tex)
 		}
-		t.tex, t.w, t.h = newTexture(glRGBA8, glRGBA, c.W, c.H, nil, 0), c.W, c.H
+		t.tex, t.w, t.h = r.newRenderTexture(c.W, c.H), c.W, c.H
 		r.canvasTex[t.tex] = true
 		if t.fb == 0 {
 			glGenFramebuffers(1, &t.fb)
@@ -855,6 +860,7 @@ func (r *Renderer) drawScene(s *scene.Scene, b *gpu.Builder) error {
 // buildScene builds the instances of s with b, with the textures they
 // read, and returns the scene built.
 func (r *Renderer) buildScene(s *scene.Scene, b *gpu.Builder) (*scene.Scene, error) {
+	r.prepareWideBuilder(b)
 	b.BlurredImage, b.Chroma = r.blurImage, r.chromaTexture
 	s = b.Build(s, r.imageTexture)
 	b.BlurredImage, b.Chroma = nil, nil
@@ -955,6 +961,7 @@ func (r *Renderer) drawBuilt(s *scene.Scene, b *gpu.Builder, part *gpu.Part) err
 				glUniform2f(r.effects[bt.Effect].uSize, float32(s.Width), float32(s.Height))
 			}
 		}
+		r.bindWide(program)
 		if r.bindVideo(bt.Image, want, s.Width, s.Height) {
 			bound = bt.Image
 		} else if bt.Image != 0 && bt.Image != bound {
@@ -1099,7 +1106,7 @@ func (r *Renderer) blurImage(img *scene.Image, bk scene.Backdrop) uintptr {
 	defer glBindFramebuffer(glFramebuffer, uint32(fb))
 	for i := range r.blurTmp {
 		if t := &r.blurTmp[i]; t.w < w || t.h < h {
-			if t.fit(max(w, t.w), max(h, t.h)) != nil {
+			if r.fitRenderTarget(t, max(w, t.w), max(h, t.h)) != nil {
 				return 0
 			}
 		}
@@ -1109,7 +1116,7 @@ func (r *Renderer) blurImage(img *scene.Image, bk scene.Backdrop) uintptr {
 	}
 	out := &r.blurred[r.used]
 	r.used++
-	if out.fit(w, h) != nil {
+	if r.fitRenderTarget(out, w, h) != nil {
 		return 0
 	}
 	glDisable(glBlend)
@@ -1155,6 +1162,7 @@ func (r *Renderer) passInto(t *target, w, h int) {
 // unit 2, the images', active.
 func (r *Renderer) bindState(s *scene.Scene) {
 	glUseProgram(r.program)
+	r.bindWide(r.program)
 	glUniform2f(r.uSize, float32(s.Width), float32(s.Height))
 	glBindVertexArray(r.vao)
 	glBindBuffer(glArrayBuffer, r.buf)
@@ -1245,7 +1253,7 @@ func (r *Renderer) fitBackdrop(b *gpu.Builder) error {
 		if r.grab.tex != 0 {
 			glDeleteTextures(1, &r.grab.tex)
 		}
-		r.grab = texture{tex: newTexture(glRGBA8, glRGBA, aw, ah, nil, 0), w: aw, h: ah}
+		r.grab = texture{tex: r.newRenderTexture(aw, ah), w: aw, h: ah}
 	}
 	if w <= r.backdrop[0].w && h <= r.backdrop[0].h {
 		return nil
@@ -1256,7 +1264,7 @@ func (r *Renderer) fitBackdrop(b *gpu.Builder) error {
 		if t.tex != 0 {
 			glDeleteTextures(1, &t.tex)
 		}
-		*t = texture{tex: newTexture(glRGBA8, glRGBA, w, h, nil, 0), w: w, h: h}
+		*t = texture{tex: r.newRenderTexture(w, h), w: w, h: h}
 		if r.backdropFB[i] == 0 {
 			glGenFramebuffers(1, &r.backdropFB[i])
 		}

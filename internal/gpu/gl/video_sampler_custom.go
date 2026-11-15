@@ -43,6 +43,7 @@ type sampledVideo struct {
 	view    *VideoTexture
 	image   *scene.Image
 	surface scene.Surface
+	wide    target
 }
 type videoRenderer struct {
 	checked                                                           bool
@@ -53,6 +54,8 @@ type videoRenderer struct {
 	bound                                                             bool
 	previousTexture, previousSampler                                  int32
 	releaseErr                                                        error
+	wide, referenceWhite, hlgPeak                                     int32
+	conversion                                                        *videoRenderer
 }
 
 var videoSamplers = struct {
@@ -94,7 +97,7 @@ var videoSource string
 
 func videoFragment(header string) string {
 	header = strings.Replace(header, "\n", "\n#extension GL_OES_EGL_image_external_essl3 : require\n", 1)
-	source := strings.Replace(shaderSource, "uniform sampler2D uImage;", "uniform sampler2D uImage;\n"+videoSource, 1)
+	source := strings.Replace(sceneShaderSource(), "uniform sampler2D uImage;", "uniform sampler2D uImage;\n"+videoSource, 1)
 	// uImage stays a 2D sampler for the shader's unused NV12 branch. The
 	// external sampler has a separate unit; two sampler types cannot share one.
 	source = strings.Replace(source, "res = sampleImage(uImage, tex, vWidths, vParams.z, dtex);", "res = sampleVideo(tex, vWidths, vParams.z, dtex);", 1)
@@ -109,7 +112,7 @@ func (r *Renderer) prepareVideo(s *videoRenderer) bool {
 	if !r.es || !hasExtension("GL_OES_EGL_image_external_essl3") {
 		return false
 	}
-	program, err := link(r.header+"#define VERTEX\n"+shaderSource, videoFragment(r.header))
+	program, err := link(r.header+"#define VERTEX\n"+sceneShaderSource(), videoFragment(r.header))
 	if err != nil {
 		return false
 	} // The upload/CPU path remains available.
@@ -133,6 +136,9 @@ func (s *videoRenderer) configureProgram(program uint32) {
 	s.crop = glGetUniformLocation(program, "uVideoCrop")
 	s.codeRange = glGetUniformLocation(program, "uVideoRange")
 	s.imageSize = glGetUniformLocation(program, "uVideoSize")
+	s.wide = glGetUniformLocation(program, "uVideoWide")
+	s.referenceWhite = glGetUniformLocation(program, "uVideoWhite")
+	s.hlgPeak = glGetUniformLocation(program, "uVideoPeak")
 	glUseProgram(uint32(previous))
 }
 
@@ -174,7 +180,7 @@ func (r *Renderer) videoTexture(image *scene.Image, surface *scene.Surface) uint
 		}
 		return 0
 	}
-	t := &sampledVideo{v, image, *surface}
+	t := &sampledVideo{view: v, image: image, surface: *surface}
 	s.images[key], s.textures[uintptr(v.Texture)] = t, t
 	return uintptr(v.Texture)
 }
@@ -198,6 +204,12 @@ func (r *Renderer) bindVideo(texture uintptr, program uint32, width, height int)
 		return true
 	}
 	v := s.textures[texture].view
+	r.bindExternal(s, v)
+	r.setVideoUniforms(s, v, width, height)
+	return true
+}
+
+func (r *Renderer) bindExternal(s *videoRenderer, v *VideoTexture) {
 	glActiveTexture(glTexture0 + videoUnit)
 	if !s.bound {
 		glGetIntegerv(0x8D67 /* TEXTURE_BINDING_EXTERNAL_OES */, &s.previousTexture)
@@ -207,6 +219,9 @@ func (r *Renderer) bindVideo(texture uintptr, program uint32, width, height int)
 	glBindSampler(videoUnit, 0)
 	glBindTexture(glTextureExternal, v.Texture)
 	glActiveTexture(glTexture0 + 2)
+}
+
+func (r *Renderer) setVideoUniforms(s *videoRenderer, v *VideoTexture, width, height int) {
 	glUniform2f(s.size, float32(width), float32(height))
 	glUniform1i(s.rotation, int32(v.Rotation))
 	glUniform1i(s.flip, int32(v.Flip))
@@ -215,12 +230,23 @@ func (r *Renderer) bindVideo(texture uintptr, program uint32, width, height int)
 	glUniform2f(s.crop, v.CropX, v.CropY)
 	glUniform2f(s.codeRange, v.RangeOffset, v.RangeScale)
 	glUniform2f(s.imageSize, float32(v.Width), float32(v.Height))
-	return true
+	var wide int32
+	white, peak := float32(203), float32(1000)
+	if output, on := r.wideOutput(); on {
+		wide = 1
+		white, peak = output.ReferenceWhiteNits, output.HLGPeakNits
+	}
+	glUniform1i(s.wide, wide)
+	glUniform1f(s.referenceWhite, white)
+	glUniform1f(s.hlgPeak, peak)
 }
 
 func (r *Renderer) videoTexture2D(texture uintptr) uintptr {
 	if s := r.videoState(false); s != nil {
 		if t := s.textures[texture]; t != nil {
+			if _, wide := r.wideOutput(); wide {
+				return r.floatVideoTexture(s, t)
+			}
 			return r.uploadedElementTexture(t.image, &t.surface)
 		}
 	}
@@ -257,6 +283,7 @@ func (r *Renderer) endVideoFrame(err error) error {
 	err = errors.Join(err, s.releaseErr)
 	s.releaseErr = nil
 	for _, t := range s.images {
+		t.wide.release()
 		if e := t.view.Release(); e != nil {
 			err = errors.Join(err, fmt.Errorf("gl: release video frame: %w", e))
 		}
@@ -273,5 +300,73 @@ func (r *Renderer) clearVideo(current bool) {
 	videoSamplers.Unlock()
 	if s != nil && current && s.program != 0 {
 		glDeleteProgram(s.program)
+		if s.conversion != nil {
+			glDeleteProgram(s.conversion.program)
+		}
 	}
+}
+
+func videoCopyFragment(header string) string {
+	header = strings.Replace(header, "\n", "\n#extension GL_OES_EGL_image_external_essl3 : require\n", 1)
+	return header + videoSource + "\nin vec2 uv; out vec4 color; void main(){ color=videoTexel(floor(uv*uVideoSize)); }"
+}
+
+func (r *Renderer) floatVideoTexture(s *videoRenderer, t *sampledVideo) uintptr {
+	if t.wide.tex != 0 {
+		return uintptr(t.wide.tex)
+	}
+	var program, vao, draw, read, active, binding int32
+	var viewport [4]int32
+	glGetIntegerv(0x8B8D, &program)
+	glGetIntegerv(0x85B5, &vao)
+	glGetIntegerv(glFramebufferBinding, &draw)
+	glGetIntegerv(0x8CAA, &read)
+	glGetIntegerv(0x84E0, &active)
+	glGetIntegerv(0x8069, &binding)
+	glGetIntegerv(0x0BA2, &viewport[0])
+	blend, scissor := glIsEnabled(glBlend), glIsEnabled(glScissorTest)
+	defer func() {
+		glUseProgram(uint32(program))
+		glBindVertexArray(uint32(vao))
+		glBindFramebuffer(glDrawFramebuffer, uint32(draw))
+		glBindFramebuffer(glReadFramebuffer, uint32(read))
+		glViewport(viewport[0], viewport[1], viewport[2], viewport[3])
+		if blend {
+			glEnable(glBlend)
+		} else {
+			glDisable(glBlend)
+		}
+		if scissor {
+			glEnable(glScissorTest)
+		} else {
+			glDisable(glScissorTest)
+		}
+		glActiveTexture(uint32(active))
+		glBindTexture(glTexture2D, uint32(binding))
+	}()
+	fail := func(err error) uintptr { s.releaseErr = errors.Join(s.releaseErr, err); t.wide.release(); return 0 }
+	if s.conversion == nil {
+		p, err := link(r.header+colorVertex, videoCopyFragment(r.header))
+		if err != nil {
+			return fail(err)
+		}
+		s.conversion = &videoRenderer{}
+		s.conversion.configureProgram(p)
+	}
+	if err := fitFloatTarget(&t.wide, t.view.Width, t.view.Height); err != nil {
+		return fail(err)
+	}
+	glBindFramebuffer(glFramebuffer, t.wide.fb)
+	glUseProgram(s.conversion.program)
+	r.bindExternal(s, t.view)
+	r.setVideoUniforms(s.conversion, t.view, t.view.Width, t.view.Height)
+	glBindVertexArray(r.passVAO)
+	glViewport(0, 0, int32(t.view.Width), int32(t.view.Height))
+	glDisable(glBlend)
+	glDisable(glScissorTest)
+	glDrawArraysInstanced(glTriangleStrip, 0, 4, 1)
+	if e := glGetError(); e != glNoError {
+		return fail(fmt.Errorf("gl: wide video conversion failed (%#x)", e))
+	}
+	return uintptr(t.wide.tex)
 }

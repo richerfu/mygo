@@ -3398,7 +3398,12 @@ either.
   `backend/gles.UseVideoSampler` (see [Custom native backends](custom-backends.md)).
   Ordinary images sample it directly; blur and shader image inputs convert on
   demand. Its lease survives all reads within `Render` and is released before
-  that call returns. External HDR samples are tone mapped to the SDR target.
+  that call returns. The normal renderer tone maps external HDR samples to SDR. Custom hosts
+  can opt into `gles.NewColor`: RGBA16F intermediates preserve extended sRGB
+  through canvases, effects and video before conversion to a host-negotiated
+  P3, extended-sRGB or BT.2020 PQ output. Unsupported import requires a
+  float uploader or an explicit SDR fallback; window color negotiation stays
+  in the host. See [Custom native backends](custom-backends.md).
   `Bitmap.UpdateYUV` shows an app's own frames so (`YUVImage.surface`):
   NV12's planes as they are, and I420's with its Cb and Cr interleaved
   into a plane of NV12's chroma that the bitmap keeps, a quarter of the

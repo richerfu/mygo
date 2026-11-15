@@ -14,6 +14,30 @@ type Context interface {
 	Identity() uintptr
 }
 
+type ColorEncoding = gl.ColorEncoding
+type ColorOutput = gl.ColorOutput
+type ColorRenderer = gl.ColorRenderer
+
+const (
+	ColorSRGB         = gl.ColorSRGB
+	ColorExtendedSRGB = gl.ColorExtendedSRGB
+	ColorDisplayP3    = gl.ColorDisplayP3
+	ColorBT2020PQ     = gl.ColorBT2020PQ
+)
+
+// NewColor creates an opt-in renderer for a host which negotiates its output
+// color space. SetOutput must match the bound framebuffer's actual encoding.
+// Extended sRGB needs a floating-point target; PQ needs at least 10 RGB bits.
+// Outputs must use a linear framebuffer attachment: the shader writes encoded
+// values, so an sRGB attachment would apply the transfer function twice.
+// The renderer does not configure an OS window or claim display HDR support.
+func NewColor(c Context, retained bool) (*ColorRenderer, error) {
+	if err := gl.UseContext(c.Resolve, c.Identity); err != nil {
+		return nil, err
+	}
+	return gl.NewColorRenderer(retained)
+}
+
 // Presenter copies software-rendered, premultiplied BGRA pixels into the
 // current framebuffer. The host owns the context and presents the framebuffer.
 type Presenter = gl.Presenter
@@ -31,9 +55,10 @@ func UseVideoUpload(upload func(native uintptr, texture uint32) bool) func() {
 
 // VideoTexture is an owned external OES decoder texture and its color/geometry
 // metadata. It is sampled directly for ordinary image draws. Operations that
-// require a 2D image (blur and shader image inputs) use Copy2D, UseVideoUpload or
-// RGBA restoration on demand. The renderer does not allocate an intermediate texture
-// for direct draws. Output currently follows the renderer's SDR contract.
+// require a 2D image (blur and shader image inputs) convert on demand. The normal
+// renderer uses Copy2D, UseVideoUpload or RGBA restoration for SDR. NewColor's
+// wide modes retain extended sRGB in a float texture without using Copy2D.
+// Direct draws need no intermediate video texture in either mode.
 type VideoTexture = gl.VideoTexture
 
 // UseVideoSampler installs an optional decoder importer. native is the opaque

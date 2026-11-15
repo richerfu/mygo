@@ -56,9 +56,40 @@ transfers one lease: `Release` runs with its context current before `Render`
 returns, also on failure, and must finish the GPU's reads. Repeated uses of the
 same image version share that lease within a render. Blur and custom shader image
 inputs need a 2D texture and convert lazily through the owned view's `Copy2D`, or
-the upload/RGBA fallback. Unsupported external import also falls back. This avoids
-the conversion pass for ordinary video drawing; output is still SDR, not an HDR
-presentation contract. None of these hooks enter default platform builds.
+the upload/RGBA fallback. Unsupported external import also falls back in the
+normal SDR renderer. None of these hooks enter default platform builds.
+
+`gles.NewColor(context, retained)` opts into color-managed presentation. Its
+`SetOutput(gles.ColorOutput{Encoding: ...})` describes the framebuffer the host
+has already negotiated and bound; it does not configure an OS window.
+`ColorExtendedSRGB` needs RGBA16F or RGBA32F, `ColorDisplayP3` needs at least
+eight RGB bits, and `ColorBT2020PQ` needs at least ten. These are encoded outputs
+in a **linear framebuffer attachment**, not an sRGB attachment that encodes
+again. The host must tag the surface with the same color space and HDR metadata,
+choose a display-compatible buffer/configuration and present it. The renderer
+rejects incompatible targets rather than silently clipping HDR to eight bits.
+
+Wide modes preserve extended sRGB through the scene, canvases, image blur,
+backdrops and effects using RGBA16F intermediates. Oklab gradients retain signed
+colors outside sRGB; GLSL effects receive `e.wide` under `MYGO_WIDE_COLOR`.
+Ordinary images and glyph atlases retain their sRGB representation. External
+video is converted and premultiplied before interpolation; direct draws sample
+the decoder allocation, while blur and shader inputs convert lazily to RGBA16F.
+`ReferenceWhiteNits` defaults to 203 and accepts 1–10000; `HLGPeakNits` defaults
+to 1000 and accepts 400–10000. They control PQ/HLG conversion into the working
+space; HLG uses a zero reference black and BT.2100-3 system gamma. Final
+presentation converts to P3 or BT.2020 PQ only after composition.
+
+If direct import is unavailable, `SetExtendedVideoUpload` supplies a synchronous
+uploader into the renderer's RGBA16F texture. It receives the native token,
+texture name, reference white and HLG peak; it must preserve GL state, keep
+source data alive through GPU reads, and report conversion errors. Without
+this path, a wide render reports an error instead of using an SDR restoration.
+The host can explicitly select `ColorSRGB` and rerender for an SDR fallback or
+an SDR screenshot. Output changes invalidate retained scenes, canvas formats
+and converted video caches. Reconfigure on display changes, and make every
+render/release with its context current. These APIs provide a renderer; OS
+HDR output and real decoder import still require host/device validation.
 
 `netproxy.UseTransport` optionally registers a host transport wrapper for ordered
 proxy policies. Use `netproxy.WrapTransport(nil)` for the standard configuration,
