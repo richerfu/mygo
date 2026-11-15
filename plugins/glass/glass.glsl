@@ -50,7 +50,11 @@ vec4 effect(vec2 p, Effect e) {
 		q -= n * (e.p0.y * glassLens(t, bezel));
 	}
 	vec3 c = glassTone(sampleBackdrop(e, q), e.p2);
-	c += (e.p1.rgb - c) * e.p1.a;
+	vec4 tint = e.p1;
+#ifdef MYGO_WIDE_COLOR
+	if (e.wide) tint = e.p4;
+#endif
+	c += (tint.rgb - c) * tint.a;
 	if (e.p0.z > 0.0 && t < 3.0 * rimWidth) {
 		float r = t / rimWidth;
 		float a = e.p0.z * exp(-r * r);

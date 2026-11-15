@@ -29,6 +29,10 @@ vec4 effect(vec2 p, Effect e) {
 	}
 	vec4 c = blurSample(e, p);
 	float lum = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+#ifdef MYGO_WIDE_COLOR
+	if (e.wide) c.rgb = lum + (c.rgb - lum) * (1.0 + e.p2.x) + e.p2.y * c.a;
+	else
+#endif
 	c.rgb = clamp(lum + (c.rgb - lum) * (1.0 + e.p2.x) + e.p2.y * c.a, vec3(0.0), vec3(c.a));
 	c += (vec4(e.p3.rgb, 1.0) - c) * e.p2.z;
 	return c * w;

@@ -125,6 +125,9 @@ func TestVideoSamplerRestoresExternalTextureAndSamplerBindings(t *testing.T) {
 		}
 		samplerID = name
 	}
+	uniformFloat := glUniform1f
+	t.Cleanup(func() { glUniform1f = uniformFloat })
+	glUniform1f = func(int32, float32) {}
 	glUniform1i = func(int32, int32) {}
 	glUniform2f = func(int32, float32, float32) {}
 	if !r.bindVideo(101, 9, 800, 600) || unit != 2 || texture != 101 || samplerID != 0 {

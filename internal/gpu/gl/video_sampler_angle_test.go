@@ -15,10 +15,11 @@ import (
 	"github.com/egoist/mygo/internal/scene"
 )
 
-// TestVideoSceneOnANGLE exercises the real renderer/shader with a 2D stand-in
-// for the external sampler. ANGLE Metal lacks OES external textures; this test
-// deliberately does not claim to validate an OHOS allocator or EGLImage import.
-func TestVideoSceneOnANGLE(t *testing.T) {
+// newANGLE makes a real GLES 3 context for scene and presentation tests. Tests
+// which replace an external sampler with sampler2D validate shader math and GL
+// resource/state handling, not an OHOS allocator or EGLImage import.
+func newANGLE(t *testing.T) (*Renderer, func(string) uintptr) {
+	t.Helper()
 	libraries := os.Getenv("MYGO_GLES_TEST_LIBRARIES")
 	if libraries == "" {
 		t.Skip("set MYGO_GLES_TEST_LIBRARIES to host ANGLE dylibs")
@@ -94,6 +95,11 @@ func TestVideoSceneOnANGLE(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(r.Release)
+	return r, resolve
+}
+
+func TestVideoSceneOnANGLE(t *testing.T) {
+	r, resolve := newANGLE(t)
 	vs := r.videoState(true)
 	vs.checked = true
 	fragment := strings.ReplaceAll(videoFragment(r.header), "#extension GL_OES_EGL_image_external_essl3 : require\n", "")
