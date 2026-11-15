@@ -379,7 +379,7 @@ func (r *Renderer) bindShader(b gpu.Batch) {
 			glBindTexture(glTexture2D, r.backdrop[0].tex)
 			continue
 		}
-		glBindTexture(glTexture2D, or(uint32(t), r.empty))
+		glBindTexture(glTexture2D, or(uint32(r.videoTexture2D(t)), r.empty))
 		if img := b.Shader.Images[i]; t != 0 && img != nil && r.canvasTex[uint32(t)] {
 			flip[i] = int32(img.H)
 		}
@@ -625,6 +625,13 @@ func (r *Renderer) planesTexture(img *scene.Image, s *scene.Surface) uintptr {
 // elementTexture uploads the frame identified by the surface's Native into
 // the texture it returns, using CPU restoration when native import fails.
 func (r *Renderer) elementTexture(img *scene.Image, s *scene.Surface) uintptr {
+	if texture := r.videoTexture(img, s); texture != 0 {
+		return texture
+	}
+	return r.uploadedElementTexture(img, s)
+}
+
+func (r *Renderer) uploadedElementTexture(img *scene.Image, s *scene.Surface) uintptr {
 	t := r.images[img.ID()]
 	if t != nil && (t.chroma != 0 || t.w != img.W || t.h != img.H) {
 		glDeleteTextures(1, &t.tex)
@@ -640,7 +647,7 @@ func (r *Renderer) elementTexture(img *scene.Image, s *scene.Surface) uintptr {
 	}
 	if t.ver != img.Version() {
 		glBindTexture(glTexture2D, t.tex)
-		if !uploadElement(s.Native) {
+		if !r.uploadVideo(s.Native) {
 			pixels := img.Pixels()
 			if len(pixels) != img.W*img.H*4 {
 				return 0
@@ -668,7 +675,10 @@ func (r *Renderer) chromaTexture(img *scene.Image) uintptr {
 
 // Render draws s into the bound framebuffer, which is s.Width×s.Height
 // device pixels.
-func (r *Renderer) Render(s *scene.Scene) error {
+func (r *Renderer) Render(s *scene.Scene) (err error) {
+	if directVideo {
+		defer func() { err = r.endVideoFrame(err) }()
+	}
 	if s.Width <= 0 || s.Height <= 0 {
 		return nil
 	}
@@ -754,6 +764,9 @@ func (r *Renderer) batchKey(i int) uint64 {
 	program := r.program
 	if bt.Effect != nil {
 		program = r.effectProgram(bt.Effect).program
+	}
+	if video := r.videoProgram(bt.Image, bt.Effect); video != 0 {
+		program = video
 	}
 	key := uint64(program) << 1
 	if bt.Hole {
@@ -917,6 +930,9 @@ func (r *Renderer) drawBuilt(s *scene.Scene, b *gpu.Builder, part *gpu.Part) err
 			}
 			want = p.program
 		}
+		if p := r.videoProgram(bt.Image, bt.Effect); p != 0 {
+			want = p
+		}
 		if bt.Backdrop != 0 {
 			// The effect shows what is drawn so far.
 			r.readBackdrop(uint32(fb), s.Height, b.Backdrops[bt.Backdrop-1])
@@ -939,9 +955,11 @@ func (r *Renderer) drawBuilt(s *scene.Scene, b *gpu.Builder, part *gpu.Part) err
 				glUniform2f(r.effects[bt.Effect].uSize, float32(s.Width), float32(s.Height))
 			}
 		}
-		if bt.Image != 0 && bt.Image != bound {
+		if r.bindVideo(bt.Image, want, s.Width, s.Height) {
 			bound = bt.Image
-			glBindTexture(glTexture2D, uint32(bound)) // unit 2 is active
+		} else if bt.Image != 0 && bt.Image != bound {
+			bound = bt.Image
+			glBindTexture(glTexture2D, uint32(r.videoTexture2D(bound))) // unit 2 is active
 			if bt.Chroma != 0 {
 				glActiveTexture(glTexture0 + chromaUnit)
 				glBindTexture(glTexture2D, uint32(bt.Chroma))
@@ -1071,7 +1089,7 @@ func (t *target) release() {
 // rows go down as an image's, as internal/raster computes it, and returns
 // it, or 0. It leaves the framebuffer bound as it was.
 func (r *Renderer) blurImage(img *scene.Image, bk scene.Backdrop) uintptr {
-	src := uint32(r.imageTexture(img))
+	src := uint32(r.videoTexture2D(r.imageTexture(img)))
 	w, h := bk.Size()
 	if src == 0 || w <= 0 || h <= 0 || w > r.maxSize || h > r.maxSize {
 		return 0
@@ -1264,6 +1282,7 @@ func or(a, b uint32) uint32 {
 
 // forget drops the objects of a context that is gone.
 func (r *Renderer) forget() {
+	r.clearVideo(false)
 	r.program, r.vao, r.buf, r.empty, r.ubo = 0, 0, 0, 0, 0
 	r.down, r.blur, r.passVAO = passProgram{}, passProgram{}, 0
 	clear(r.effects)
@@ -1305,6 +1324,7 @@ func (r *Renderer) Release() {
 		r.forget()
 		return
 	}
+	r.clearVideo(true)
 	for _, t := range r.images {
 		glDeleteTextures(1, &t.tex)
 		if t.chroma != 0 {

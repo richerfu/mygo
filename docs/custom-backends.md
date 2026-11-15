@@ -45,6 +45,21 @@ returns another picture or closes; the host owns native leases throughout that
 interval. The renderer caches uploads by image version and replaces targets on
 resize. This contract expresses SDR pictures; it does not imply HDR presentation.
 
+`backend/gles.UseVideoSampler` additionally imports an owned external OES texture.
+With `GL_OES_EGL_image_external_essl3`, ordinary image draws sample the decoder
+allocation directly, with no intermediate RGBA texture. The host supplies crop,
+orientation, transfer, gamut and range metadata; the renderer normalizes and
+premultiplies texels before filtering, including PQ/HLG-to-SDR conversion. Use a
+non-NV12 surface format when the importer returns RGB samples rather than separate
+luma/chroma planes, so image blur remains available. A non-nil `VideoTexture`
+transfers one lease: `Release` runs with its context current before `Render`
+returns, also on failure, and must finish the GPU's reads. Repeated uses of the
+same image version share that lease within a render. Blur and custom shader image
+inputs need a 2D texture and convert lazily through the owned view's `Copy2D`, or
+the upload/RGBA fallback. Unsupported external import also falls back. This avoids
+the conversion pass for ordinary video drawing; output is still SDR, not an HDR
+presentation contract. None of these hooks enter default platform builds.
+
 `netproxy.UseTransport` optionally registers a host transport wrapper for ordered
 proxy policies. Use `netproxy.WrapTransport(nil)` for the standard configuration,
 or configure `netproxy.Transport().Clone()` and pass it to `WrapTransport`.

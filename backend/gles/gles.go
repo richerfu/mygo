@@ -29,6 +29,24 @@ func UseVideoUpload(upload func(native uintptr, texture uint32) bool) func() {
 	return gl.UseVideoUpload(upload)
 }
 
+// VideoTexture is an owned external OES decoder texture and its color/geometry
+// metadata. It is sampled directly for ordinary image draws. Operations that
+// require a 2D image (blur and shader image inputs) use Copy2D, UseVideoUpload or
+// RGBA restoration on demand. The renderer does not allocate an intermediate texture
+// for direct draws. Output currently follows the renderer's SDR contract.
+type VideoTexture = gl.VideoTexture
+
+// UseVideoSampler installs an optional decoder importer. native is the opaque
+// scene.Surface.Native token. Returning nil uses the upload/CPU fallback. Import
+// must preserve GL state. A non-nil texture transfers one owned lease; Release
+// is called with the same context current before Render returns, even on error,
+// and must wait for all GPU reads before returning the producer buffer. A later
+// render imports afresh, so no decoder lease survives context disposal.
+// The returned function removes only this registration and is idempotent.
+func UseVideoSampler(importFrame func(native uintptr) *VideoTexture) func() {
+	return gl.UseVideoSampler(importFrame)
+}
+
 // NewPresenter prepares a software-frame presenter with c current.
 func NewPresenter(c Context) (*Presenter, error) {
 	if err := gl.UseContext(c.Resolve, c.Identity); err != nil {
