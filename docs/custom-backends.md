@@ -35,6 +35,27 @@ Native UI uses separate, optional extensions:
   host remains responsible for closing players it already opened. Registering a
   factory opens no player. Without one, custom builds return `ErrUnsupported`.
 
+For decoder frames, `backend/gles.UseVideoUpload` registers a callback that takes
+an opaque `backend/scene.Surface.Native` token and fills the renderer's RGBA8
+texture directly in its current context. This registration exists only in custom
+GLES builds and adds no fields to the shared scene types. The callback preserves
+GL state and keeps source reads valid until the GPU has finished them. Return false to
+use the picture's `RGBA` restoration path. Pictures stay valid until the engine
+returns another picture or closes; the host owns native leases throughout that
+interval. The renderer caches uploads by image version and replaces targets on
+resize. This contract expresses SDR pictures; it does not imply HDR presentation.
+
+`netproxy.UseTransport` optionally registers a host transport wrapper for ordered
+proxy policies. Use `netproxy.WrapTransport(nil)` for the standard configuration,
+or configure `netproxy.Transport().Clone()` and pass it to `WrapTransport`.
+MyGo's updater, fetch and websocket clients use this path. Clients constructed
+before host startup select the wrapper when making requests; replacing or releasing
+a binding retires its idle pool without interrupting requests already in progress.
+Without a wrapper,
+behavior remains the existing transport. `UseResolver` and `Proxy` still expose
+the single-URL compatibility hook. A host implementing failover must preserve
+environment/loopback precedence and avoid replaying an already sent request.
+
 These packages stay separate so a WebView-only application does not retain text
 or rendering dependencies merely by using platform contracts.
 
@@ -108,3 +129,9 @@ CGO_ENABLED=0 go test -tags mygo_custom_backend ./internal/text -run TestNativeP
 Tests that lay out text under the custom backend tag must install a provider;
 the ordinary full test suite uses the built-in backend. Host-specific GPU,
 window, input and service integration requires runtime validation in the adapter.
+
+Release size check for the optional transport and video-upload hooks (Go 1.27.3,
+CGO disabled, `-trimpath -buildvcs=false -tags mygo_noinspector`, stripped
+production builds): `counter-native` stays at 9,970,226 bytes and `hello` at
+9,765,058 bytes. Their linker dependency graphs are unchanged. The registration
+hooks are absent from both applications.

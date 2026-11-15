@@ -764,7 +764,7 @@ func httpClient() *http.Client {
 func newHTTPClient() *http.Client {
 	transport := netproxy.Transport().Clone()
 	transport.ResponseHeaderTimeout = httpHeaderTimeout
-	return &http.Client{Transport: transport}
+	return &http.Client{Transport: netproxy.WrapTransport(transport)}
 }
 
 // stalledBody cancels the request of a body that stops arriving, and says
