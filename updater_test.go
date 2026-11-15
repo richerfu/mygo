@@ -9,9 +9,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,10 +26,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/egoist/mygo/internal/update"
 	"github.com/egoist/mygo/internal/wait"
+	"github.com/egoist/mygo/netproxy"
 )
 
 // updateServer serves a signed update whose app holds main with content,
@@ -520,27 +524,44 @@ func TestHTTPGetRetries(t *testing.T) {
 // A server that accepts the connection and never answers is given up on,
 // rather than holding a check open until the socket times out.
 func TestHTTPGetHeaderTimeout(t *testing.T) {
-	transport := httpClient().Transport.(*http.Transport)
-	defer func(r []time.Duration, d time.Duration) {
-		httpRetries, transport.ResponseHeaderTimeout = r, d
-	}(httpRetries, transport.ResponseHeaderTimeout)
-	httpRetries = []time.Duration{time.Millisecond}
-	transport.ResponseHeaderTimeout = 50 * time.Millisecond
-
-	block := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		<-block
-	}))
-	defer srv.Close()
-	defer close(block)
-
-	start := time.Now()
-	if _, err := httpGet(t.Context(), srv.URL+"/file"); err == nil {
-		t.Fatal("a server that never answers returned no error")
-	}
-	if waited := time.Since(start); waited > 5*time.Second {
-		t.Fatalf("waited %v for the headers of a response", waited)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		retries := httpRetries
+		httpRetries = []time.Duration{time.Millisecond}
+		defer func() { httpRetries = retries }()
+		var requests atomic.Int32
+		var servers sync.WaitGroup
+		release := netproxy.UseTransport(func(base *http.Transport) http.RoundTripper {
+			if base.ResponseHeaderTimeout != httpHeaderTimeout {
+				t.Fatalf("updater header deadline lost: %v", base.ResponseHeaderTimeout)
+			}
+			transport := base.Clone()
+			transport.ResponseHeaderTimeout = 50 * time.Millisecond
+			transport.DialContext = func(context.Context, string, string) (net.Conn, error) {
+				requests.Add(1)
+				client, server := net.Pipe()
+				servers.Add(1)
+				go func() { defer servers.Done(); defer server.Close(); _, _ = io.Copy(io.Discard, server) }()
+				return client, nil
+			}
+			return transport
+		})
+		defer release()
+		start := time.Now()
+		_, err := httpGet(t.Context(), "http://127.0.0.1/file")
+		var timeout net.Error
+		if !errors.As(err, &timeout) || !timeout.Timeout() {
+			t.Fatalf("missing response-header timeout: %v", err)
+		}
+		servers.Wait()
+		if requests.Load() != 2 {
+			t.Fatalf("requests: %d, want initial attempt plus retry", requests.Load())
+		}
+		// Synctest advances virtual time only after the pipe readers block; this
+		// checks the configured deadline without a wall-clock scheduling assertion.
+		if elapsed := time.Since(start); elapsed != 101*time.Millisecond {
+			t.Fatalf("virtual header deadlines: %v", elapsed)
+		}
+	})
 }
 
 // A body that stops arriving is given up on, rather than blocking the read
