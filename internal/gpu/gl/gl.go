@@ -284,7 +284,7 @@ func (r *Renderer) init() error {
 	}
 	glUseProgram(r.program)
 	r.uSize = glGetUniformLocation(r.program, "uSize")
-	glUniform1i(glGetUniformLocation(r.program, "uMask"), 0)
+	glUniform1i(glGetUniformLocation(r.program, "uMask"), maskUnit)
 	glUniform1i(glGetUniformLocation(r.program, "uColor"), 1)
 	glUniform1i(glGetUniformLocation(r.program, "uImage"), 2)
 	glUniform1i(glGetUniformLocation(r.program, "uClipMask"), 4)
@@ -339,7 +339,7 @@ func (r *Renderer) effectProgram(e *scene.Effect) *effectProgram {
 	}
 	glUseProgram(p.program)
 	p.uSize = glGetUniformLocation(p.program, "uSize")
-	glUniform1i(glGetUniformLocation(p.program, "uMask"), 0)
+	glUniform1i(glGetUniformLocation(p.program, "uMask"), maskUnit)
 	glUniform1i(glGetUniformLocation(p.program, "uBackdrop"), 3)
 	glUniform1i(glGetUniformLocation(p.program, "uClipMask"), 4)
 	if e.Shader != nil {
@@ -1028,7 +1028,7 @@ func (r *Renderer) drawBuilt(s *scene.Scene, b *gpu.Builder, part *gpu.Part) err
 	// expects it.
 	glDisable(glScissorTest)
 	glDisable(glBlend)
-	for unit := range chromaUnit + 1 {
+	for unit := range max(chromaUnit, maskUnit) + 1 {
 		glActiveTexture(glTexture0 + uint32(unit))
 		glBindTexture(glTexture2D, 0)
 	}
@@ -1198,6 +1198,10 @@ func (r *Renderer) bindState(s *scene.Scene) {
 	for unit, tex := range [5]uint32{or(r.mask.tex, r.empty), or(r.color.tex, r.empty), r.empty, r.empty, r.empty} {
 		glActiveTexture(glTexture0 + uint32(unit))
 		glBindTexture(glTexture2D, tex)
+	}
+	if maskUnit != 0 {
+		glActiveTexture(glTexture0 + maskUnit)
+		glBindTexture(glTexture2D, or(r.mask.tex, r.empty))
 	}
 	glActiveTexture(glTexture0 + stopsUnit)
 	glBindTexture(glTexture2D, or(r.stopsTex, r.empty))
