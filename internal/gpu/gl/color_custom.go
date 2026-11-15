@@ -149,6 +149,51 @@ func (c *ColorRenderer) clearIntermediates() {
 	r.Invalidate()
 }
 
+// Capture draws an SDR snapshot without changing the host window's output
+// format or color metadata. The result is premultiplied RGBA, top row first.
+// The renderer's context must be current, but it needs no window surface.
+func (c *ColorRenderer) Capture(s *scene.Scene) (width, height int, rgba []byte, err error) {
+	if c.released {
+		return 0, 0, nil, fmt.Errorf("gl: color renderer is released")
+	}
+	if currentContext() == 0 {
+		return 0, 0, nil, errNoContext
+	}
+	if s == nil || s.Width <= 0 || s.Height <= 0 || s.Width > c.renderer.maxSize || s.Height > c.renderer.maxSize {
+		return 0, 0, nil, fmt.Errorf("gl: invalid capture dimensions")
+	}
+	var draw, read int32
+	glGetIntegerv(glFramebufferBinding, &draw)
+	glGetIntegerv(0x8CAA, &read)
+	output := c.output
+	var frame target
+	defer func() {
+		frame.release()
+		glBindFramebuffer(glDrawFramebuffer, uint32(draw))
+		glBindFramebuffer(glReadFramebuffer, uint32(read))
+		c.output = output
+		// A retained renderer must redraw the live target after this snapshot.
+		c.Invalidate()
+	}()
+	if err := frame.fit(s.Width, s.Height); err != nil {
+		return 0, 0, nil, err
+	}
+	c.output.Encoding = ColorSRGB
+	c.Invalidate()
+	if err := c.Render(s); err != nil {
+		return 0, 0, nil, err
+	}
+	glBindFramebuffer(glReadFramebuffer, frame.fb)
+	rgba, err = ReadFramebuffer(s.Width, s.Height)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	for i := 0; i < len(rgba); i += 4 {
+		rgba[i], rgba[i+2] = rgba[i+2], rgba[i]
+	}
+	return s.Width, s.Height, rgba, nil
+}
+
 func (c *ColorRenderer) Render(s *scene.Scene) error {
 	if c.released {
 		return fmt.Errorf("gl: color renderer is released")

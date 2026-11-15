@@ -85,8 +85,13 @@ uploader into the renderer's RGBA16F texture. It receives the native token,
 texture name, reference white and HLG peak; it must preserve GL state, keep
 source data alive through GPU reads, and report conversion errors. Without
 this path, a wide render reports an error instead of using an SDR restoration.
-The host can explicitly select `ColorSRGB` and rerender for an SDR fallback or
-an SDR screenshot. Output changes invalidate retained scenes, canvas formats
+The host can explicitly select `ColorSRGB` and rerender for an SDR fallback.
+`ColorRenderer.Capture` implements `render.Capturer`: it renders into a private
+RGBA8 target and returns an SDR, premultiplied RGBA snapshot with top-first rows.
+It preserves the configured output and both framebuffer bindings, and invalidates
+retained drawing before the next live frame. A retained context may be leased
+without a window surface for capture; the host need not change the live window
+format or its color metadata. Output changes invalidate retained scenes, canvas formats
 and converted video caches. Reconfigure on display changes, and make every
 render/release with its context current. These APIs provide a renderer; OS
 HDR output and real decoder import still require host/device validation.

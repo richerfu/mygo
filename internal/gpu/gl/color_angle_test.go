@@ -640,3 +640,65 @@ func TestColorBufferFormatsAndResizeOnANGLE(t *testing.T) {
 		t.Fatal("context restored", err)
 	}
 }
+
+func TestColorCaptureKeepsLiveOutputOnANGLE(t *testing.T) {
+	r, _ := newANGLE(t)
+	c := wrapColorRenderer(r)
+	t.Cleanup(c.Release)
+	out, read := colorTarget(t), colorTarget(t)
+	r.Partial = true
+	s := colorScene([4]float32{2, -.25, .5, .5})
+	output := ColorOutput{Encoding: ColorExtendedSRGB, ReferenceWhiteNits: 203, HLGPeakNits: 1000}
+	if err := c.SetOutput(output); err != nil {
+		t.Fatal(err)
+	}
+	glBindFramebuffer(glFramebuffer, out.fb)
+	if err := c.Render(s); err != nil {
+		t.Fatal(err)
+	}
+	glBindFramebuffer(glReadFramebuffer, read.fb)
+	for range 2 {
+		w, h, rgba, err := c.Capture(s)
+		if err != nil || w != 16 || h != 16 || len(rgba) != 16*16*4 {
+			t.Fatal(w, h, len(rgba), err)
+		}
+		// SDR uses the scene's mapped fallback color, and the capture contract is
+		// RGBA rather than ReadFramebuffer's BGRA. It must draw on repeated calls.
+		for i := 0; i < len(rgba); i += 4 {
+			if rgba[i] != 128 || rgba[i+1] != 64 || rgba[i+2] != 32 || rgba[i+3] != 255 {
+				t.Fatal("SDR capture color", rgba[i:i+4])
+			}
+		}
+		var drawBinding, readBinding int32
+		glGetIntegerv(glFramebufferBinding, &drawBinding)
+		glGetIntegerv(0x8CAA, &readBinding)
+		if uint32(drawBinding) != out.fb || uint32(readBinding) != read.fb || c.output != output {
+			t.Fatal("capture changed host output", drawBinding, readBinding, c.output)
+		}
+	}
+	glBindFramebuffer(glReadFramebuffer, out.fb)
+	assertColor(t, readColor(t, 8, 8), [4]float32{1, -.125, .25, .5}, .002)
+	if err := c.Render(s); err != nil {
+		t.Fatal("resume HDR", err)
+	}
+	assertColor(t, readColor(t, 8, 8), [4]float32{1, -.125, .25, .5}, .002)
+	// A same-mode capture must not leave partial rendering believing the live
+	// target was drawn, even if no output transition invalidates its contents.
+	if err := c.SetOutput(ColorOutput{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := c.Capture(s); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Render(s); err != nil {
+		t.Fatal(err)
+	}
+	assertColor(t, readColor(t, 8, 8), [4]float32{128.0 / 255, 64.0 / 255, 32.0 / 255, 1}, .002)
+	if _, _, _, err := c.Capture(&scene.Scene{Width: r.maxSize + 1, Height: 1}); err == nil {
+		t.Fatal("oversize capture")
+	}
+	c.Release()
+	if _, _, _, err := c.Capture(s); err == nil {
+		t.Fatal("capture after release")
+	}
+}
