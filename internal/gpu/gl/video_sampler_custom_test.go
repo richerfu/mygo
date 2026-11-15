@@ -94,6 +94,7 @@ func TestVideoSamplerRestoresExternalTextureAndSamplerBindings(t *testing.T) {
 		r.clearVideo(false)
 	})
 	unit, texture, samplerID := uint32(2), uint32(73), uint32(19)
+	texture2D := uint32(53)
 	glActiveTexture = func(value uint32) { unit = value - glTexture0 }
 	glGetIntegerv = func(name uint32, out *int32) {
 		switch name {
@@ -109,15 +110,27 @@ func TestVideoSamplerRestoresExternalTextureAndSamplerBindings(t *testing.T) {
 				t.Fatal(unit)
 			}
 			*out = int32(samplerID)
+		case 0x8069:
+			if unit != videoUnit {
+				t.Fatal(unit)
+			}
+			*out = int32(texture2D)
 		default:
 			t.Fatal(name)
 		}
 	}
 	glBindTexture = func(target, name uint32) {
-		if target != glTextureExternal || unit != videoUnit {
+		if unit != videoUnit {
 			t.Fatal(target, unit)
 		}
-		texture = name
+		switch target {
+		case glTextureExternal:
+			texture = name
+		case glTexture2D:
+			texture2D = name
+		default:
+			t.Fatal(target)
+		}
 	}
 	glBindSampler = func(index, name uint32) {
 		if index != videoUnit {
@@ -130,10 +143,10 @@ func TestVideoSamplerRestoresExternalTextureAndSamplerBindings(t *testing.T) {
 	glUniform1f = func(int32, float32) {}
 	glUniform1i = func(int32, int32) {}
 	glUniform2f = func(int32, float32, float32) {}
-	if !r.bindVideo(101, 9, 800, 600) || unit != 2 || texture != 101 || samplerID != 0 {
-		t.Fatal(unit, texture, samplerID)
+	if !r.bindVideo(101, 9, 800, 600) || unit != 2 || texture != 101 || samplerID != 0 || texture2D != 0 {
+		t.Fatal(unit, texture, samplerID, texture2D)
 	}
-	if err := r.endVideoFrame(nil); err != nil || unit != 2 || texture != 73 || samplerID != 19 {
-		t.Fatal(err, unit, texture, samplerID)
+	if err := r.endVideoFrame(nil); err != nil || unit != 2 || texture != 73 || samplerID != 19 || texture2D != 53 {
+		t.Fatal(err, unit, texture, samplerID, texture2D)
 	}
 }

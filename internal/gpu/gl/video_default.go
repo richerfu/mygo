@@ -5,6 +5,7 @@ package gl
 import "github.com/egoist/mygo/internal/scene"
 
 const directVideo = false
+const maskUnit = 0
 
 func (*Renderer) videoTexture(*scene.Image, *scene.Surface) uintptr { return 0 }
 func (*Renderer) videoProgram(uintptr, *scene.Effect) uint32        { return 0 }

@@ -14,7 +14,11 @@ import (
 )
 
 const directVideo = true
-const videoUnit = 11
+
+// Some external-image drivers sample correctly only on unit zero. Keep the
+// mask atlas on a separate unit so scene shaders never alias sampler types.
+const videoUnit = 0
+const maskUnit = 11
 const glTextureExternal = 0x8D65
 
 // VideoTexture owns an external OES texture until Release. Rotation is clockwise
@@ -52,7 +56,7 @@ type videoRenderer struct {
 	images                                                            map[videoImageKey]*sampledVideo
 	textures                                                          map[uintptr]*sampledVideo
 	bound                                                             bool
-	previousTexture, previousSampler                                  int32
+	previousTexture, previousSampler, previous2D                      int32
 	releaseErr                                                        error
 	wide, referenceWhite, hlgPeak                                     int32
 	conversion                                                        *videoRenderer
@@ -97,11 +101,19 @@ var videoSource string
 
 func videoFragment(header string) string {
 	header = strings.Replace(header, "\n", "\n#extension GL_OES_EGL_image_external_essl3 : require\n", 1)
-	source := strings.Replace(sceneShaderSource(), "uniform sampler2D uImage;", "uniform sampler2D uImage;\n"+videoSource, 1)
+	source := sceneShaderSource()
+	// External-image drivers can inspect entry points before preprocessing.
+	// Omit the unused vertex and backdrop passes rather than exposing their
+	// inactive main functions to the fragment shader's external-image lowering.
+	start := strings.Index(source, "#if defined(FRAGMENT) || defined(EFFECT)")
+	end := strings.Index(source, "// The passes computing the backdrop")
+	if start >= 0 && end > start {
+		source = source[start:end]
+	}
 	// uImage stays a 2D sampler for the shader's unused NV12 branch. The
 	// external sampler has a separate unit; two sampler types cannot share one.
 	source = strings.Replace(source, "res = sampleImage(uImage, tex, vWidths, vParams.z, dtex);", "res = sampleVideo(tex, vWidths, vParams.z, dtex);", 1)
-	return header + "#define FRAGMENT\n" + source
+	return header + videoSource + "\n#define FRAGMENT\n" + source
 }
 
 func (r *Renderer) prepareVideo(s *videoRenderer) bool {
@@ -125,7 +137,7 @@ func (s *videoRenderer) configureProgram(program uint32) {
 	var previous int32
 	glGetIntegerv(0x8B8D /* CURRENT_PROGRAM */, &previous)
 	glUseProgram(program)
-	for name, unit := range map[string]int32{"uMask": 0, "uColor": 1, "uImage": 2, "uClipMask": 4, "uStops": stopsUnit, "uChroma": chromaUnit, "uVideo": videoUnit} {
+	for name, unit := range map[string]int32{"uMask": maskUnit, "uColor": 1, "uImage": 2, "uClipMask": 4, "uStops": stopsUnit, "uChroma": chromaUnit, "uVideo": videoUnit} {
 		glUniform1i(glGetUniformLocation(program, name), unit)
 	}
 	s.size = glGetUniformLocation(program, "uSize")
@@ -214,9 +226,13 @@ func (r *Renderer) bindExternal(s *videoRenderer, v *VideoTexture) {
 	if !s.bound {
 		glGetIntegerv(0x8D67 /* TEXTURE_BINDING_EXTERNAL_OES */, &s.previousTexture)
 		glGetIntegerv(0x8919 /* SAMPLER_BINDING of the active unit */, &s.previousSampler)
+		glGetIntegerv(0x8069 /* TEXTURE_BINDING_2D */, &s.previous2D)
 		s.bound = true
 	}
 	glBindSampler(videoUnit, 0)
+	// External-image drivers may resolve the unit's 2D binding even with an
+	// external sampler. No scene sampler2D uses this reserved unit.
+	glBindTexture(glTexture2D, 0)
 	glBindTexture(glTextureExternal, v.Texture)
 	glActiveTexture(glTexture0 + 2)
 }
@@ -275,6 +291,7 @@ func (r *Renderer) endVideoFrame(err error) error {
 		var active int32
 		glGetIntegerv(0x84E0 /* ACTIVE_TEXTURE */, &active)
 		glActiveTexture(glTexture0 + videoUnit)
+		glBindTexture(glTexture2D, uint32(s.previous2D))
 		glBindTexture(glTextureExternal, uint32(s.previousTexture))
 		glBindSampler(videoUnit, uint32(s.previousSampler))
 		glActiveTexture(uint32(active))
