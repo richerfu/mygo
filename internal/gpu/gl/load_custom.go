@@ -17,6 +17,7 @@ var (
 	glGetString             func(name uint32) uintptr
 	glGetError              func() uint32
 	glGetIntegerv           func(name uint32, data *int32)
+	glBindSampler           func(unit, sampler uint32)
 	glCreateShader          func(typ uint32) uint32
 	glShaderSource          func(shader uint32, count int32, sources **byte, lengths *int32)
 	glCompileShader         func(shader uint32)
@@ -116,6 +117,7 @@ func load() error {
 		gl(&glGetError, "glGetError")
 
 		gl(&glGetIntegerv, "glGetIntegerv")
+		gl(&glBindSampler, "glBindSampler")
 
 		gl(&glCreateShader, "glCreateShader")
 

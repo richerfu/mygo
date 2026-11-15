@@ -3774,6 +3774,11 @@ either.
   GPU to GPU. NV12 is converted in the shaders' YUV image class (the
   matrix in the instance's params, the chroma in texture slot 10 or 11),
   which the CPU renderer samples the same way (`raster.sampleNV12`).
+  Custom GLES hosts can import an owned external decoder texture with
+  `backend/gles.UseVideoSampler` (see [Custom native backends](custom-backends.md)).
+  Ordinary images sample it directly; blur and shader image inputs convert on
+  demand. Its lease survives all reads within `Render` and is released before
+  that call returns. External HDR samples are tone mapped to the SDR target.
   `Bitmap.UpdateYUV` shows an app's own frames so (`YUVImage.surface`):
   NV12's planes as they are, and I420's with its Cb and Cr interleaved
   into a plane of NV12's chroma that the bitmap keeps, a quarter of the
