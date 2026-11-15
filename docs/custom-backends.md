@@ -26,6 +26,14 @@ Native UI uses separate, optional extensions:
   its context current for construction, drawing and release, and owns presenting
   and context lifetime.
 - `backend/scene`: use the same scene representation as the normal renderers.
+- `backend/media`: install `UseFactory(func(Source) (Engine, error))` for
+  `ui/video.Open`, `OpenURL` and `OpenData` under the custom backend tag. Sources
+  retain file paths/URLs or input bytes. An engine supplies immutable pictures,
+  playback controls and state; callbacks only wake the UI, and an event-driven
+  engine returns zero from `Interval`. Releasing a factory prevents future opens
+  without removing a newer binding or restoring an older disposed host. The
+  host remains responsible for closing players it already opened. Registering a
+  factory opens no player. Without one, custom builds return `ErrUnsupported`.
 
 These packages stay separate so a WebView-only application does not retain text
 or rendering dependencies merely by using platform contracts.

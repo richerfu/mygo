@@ -4,4 +4,9 @@ package video
 
 import "github.com/egoist/mygo/internal/media"
 
-func newEngine(source) (media.Engine, error) { return nil, ErrUnsupported }
+func newEngine(s source) (media.Engine, error) {
+	if open := media.Factory(); open != nil {
+		return open(media.Source{URL: s.url, Path: s.path, Data: s.data})
+	}
+	return nil, ErrUnsupported
+}
