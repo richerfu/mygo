@@ -2,7 +2,7 @@
 // in the system's settings, as browsers and the app's web pages do, with
 // its bypass list and automatic configuration (PAC files, WPAD):
 //
-//	client := &http.Client{Transport: netproxy.Transport()}
+//	client := &http.Client{Transport: netproxy.WrapTransport(nil)}
 //
 // MyGo's own requests go this way: the updater's, and those of the fetch
 // and websocket plugins unless their options name a client.

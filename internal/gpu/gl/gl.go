@@ -625,8 +625,8 @@ func (r *Renderer) planesTexture(img *scene.Image, s *scene.Surface) uintptr {
 	return uintptr(t.tex)
 }
 
-// elementTexture uploads the frame of video of a browser's video element
-// (the surface's Native) into the texture it returns, GPU to GPU.
+// elementTexture uploads the frame identified by the surface's Native into
+// the texture it returns, using CPU restoration when native import fails.
 func (r *Renderer) elementTexture(img *scene.Image, s *scene.Surface) uintptr {
 	t := r.images[img.ID()]
 	if t != nil && (t.chroma != 0 || t.w != img.W || t.h != img.H) {
@@ -644,7 +644,15 @@ func (r *Renderer) elementTexture(img *scene.Image, s *scene.Surface) uintptr {
 	if t.ver != img.Version() {
 		glBindTexture(glTexture2D, t.tex)
 		if !uploadElement(s.Native) {
-			return 0
+			pixels := img.Pixels()
+			if len(pixels) != img.W*img.H*4 {
+				return 0
+			}
+			glBindTexture(glTexture2D, t.tex)
+			unpack(img.W*4, glRGBA8)
+			glTexSubImage2D(glTexture2D, 0, 0, 0, int32(img.W), int32(img.H), glRGBA, glUnsignedByte, unsafe.Pointer(&pixels[0]))
+			unpackReset()
+			img.Uploaded()
 		}
 		t.ver = img.Version()
 	}

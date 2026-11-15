@@ -37,7 +37,7 @@ import (
 // Options configure the plugin.
 type Options struct {
 	// Client makes the requests; nil means a client of
-	// netproxy.Transport(), which follows the system's proxy settings. Its
+	// netproxy.WrapTransport(nil), which follows the system's proxy settings. Its
 	// CheckRedirect limits the redirects followed when the request's
 	// redirect mode is "follow".
 	Client *http.Client
@@ -52,7 +52,7 @@ var Plugin = New(Options{})
 // New returns the plugin with options.
 func New(opts Options) mygo.Plugin {
 	if opts.Client == nil {
-		opts.Client = &http.Client{Transport: netproxy.Transport()}
+		opts.Client = &http.Client{Transport: netproxy.WrapTransport(nil)}
 	}
 	return mygo.Plugin{Name: "fetch", Service: &service{opts}}
 }

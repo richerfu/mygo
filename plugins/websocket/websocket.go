@@ -34,7 +34,7 @@ import (
 // Options configure the plugin.
 type Options struct {
 	// Client makes the opening handshakes; nil means a client of
-	// netproxy.Transport(), which follows the system's proxy settings.
+	// netproxy.WrapTransport(nil), which follows the system's proxy settings.
 	// Its Timeout and CheckRedirect are ignored: connections last, and
 	// redirects fail them, as in browsers.
 	Client *http.Client
@@ -55,7 +55,7 @@ var Plugin = New(Options{})
 // New returns the plugin with options.
 func New(opts Options) mygo.Plugin {
 	if opts.Client == nil {
-		opts.Client = &http.Client{Transport: netproxy.Transport()}
+		opts.Client = &http.Client{Transport: netproxy.WrapTransport(nil)}
 	}
 	if opts.MaxMessageSize <= 0 {
 		opts.MaxMessageSize = 64 << 20

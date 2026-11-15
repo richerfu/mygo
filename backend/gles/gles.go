@@ -18,6 +18,17 @@ type Context interface {
 // current framebuffer. The host owns the context and presents the framebuffer.
 type Presenter = gl.Presenter
 
+// UseVideoUpload installs a host's decoder-frame uploader. native is the opaque
+// token in scene.Surface.Native; texture is the renderer's RGBA8 target in the
+// current context. The callback must preserve GL state and keep source reads
+// valid until the GPU finishes them. False falls back to the picture's RGBA
+// restoration. The host owns frame leases until the engine replaces the picture
+// or closes. Callbacks may run until an in-flight render completes after release.
+// The returned function removes only this registration and is idempotent.
+func UseVideoUpload(upload func(native uintptr, texture uint32) bool) func() {
+	return gl.UseVideoUpload(upload)
+}
+
 // NewPresenter prepares a software-frame presenter with c current.
 func NewPresenter(c Context) (*Presenter, error) {
 	if err := gl.UseContext(c.Resolve, c.Identity); err != nil {
