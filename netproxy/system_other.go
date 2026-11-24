@@ -1,4 +1,4 @@
-//go:build !windows && !(darwin && !ios && (amd64 || arm64)) && !(linux && !android && (amd64 || arm64))
+//go:build mygo_custom_backend || (!(darwin && !ios) && !(linux && !android) && !windows)
 
 package netproxy
 

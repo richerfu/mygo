@@ -1,4 +1,4 @@
-//go:build (linux && !android && (amd64 || arm64)) || js || android
+//go:build mygo_custom_backend || (linux && !android && (amd64 || arm64)) || js || android
 
 package gl
 
@@ -19,6 +19,18 @@ type Presenter struct {
 	tex, fb uint32
 	w, h    int
 	rgba    []byte
+}
+
+// NewPresenter prepares a presenter for the current context. Its textures
+// are allocated on the first Present and live until the context is destroyed.
+func NewPresenter() (*Presenter, error) {
+	if err := load(); err != nil {
+		return nil, err
+	}
+	if !hasContext() {
+		return nil, errNoContext
+	}
+	return &Presenter{}, nil
 }
 
 // Present copies premultiplied BGRA rows of stride bytes, width×height

@@ -1,4 +1,4 @@
-//go:build js
+//go:build !mygo_custom_backend && js
 
 package ui
 

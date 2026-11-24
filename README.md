@@ -128,6 +128,7 @@ go tool mygo dev
 ```
 
 Read the [documentation](docs/README.md).
+For external platform hosts, see [custom native backends](docs/custom-backends.md).
 
 ## License
 

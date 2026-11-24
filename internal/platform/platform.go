@@ -64,6 +64,17 @@ type TitleBar struct{ Height, Left, Right, Bottom int }
 // Color is an 8-bit RGBA color.
 type Color struct{ R, G, B, A uint8 }
 
+// Current returns the process's backend. The core installs this accessor
+// during initialization; calling it initializes the backend on first use.
+var Current func() Backend
+
+// MenuAutomation optionally activates a native menu item by its visible label
+// path. window is the native window handle. Called on the UI thread with a
+// non-empty path and non-empty segments; the backend checks item availability.
+type MenuAutomation interface {
+	ActivateMenuItem(window uintptr, path []string) error
+}
+
 // Backend is implemented by every native backend.
 type Backend interface {
 	// Name identifies the backend, for example "darwin/wkwebview".
@@ -152,6 +163,14 @@ type Backend interface {
 	// native UI needs none, so an app whose windows all do runs without one.
 	// It may be called before Init, from any goroutine.
 	WebViewAvailable() bool
+}
+
+// HostedBackend registers with an externally owned native event loop. RunHosted
+// returns after registration, while the application remains live. stopped must
+// run on the UI thread exactly once after windows and callbacks have stopped.
+// An error means startup failed and the application can finish immediately.
+type HostedBackend interface {
+	RunHosted(stopped func()) error
 }
 
 // WindowStateWindow is a window whose bounds in DIPs change with the

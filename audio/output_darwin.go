@@ -1,4 +1,4 @@
-//go:build !ios
+//go:build !mygo_custom_backend && darwin && !ios && (arm64 || amd64)
 
 package audio
 

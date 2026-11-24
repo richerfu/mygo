@@ -1,4 +1,4 @@
-//go:build linux && !android && (amd64 || arm64) && !android
+//go:build !mygo_custom_backend && linux && !android && (amd64 || arm64)
 
 package text
 

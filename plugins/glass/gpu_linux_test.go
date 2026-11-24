@@ -1,4 +1,4 @@
-//go:build (amd64 || arm64) && !android
+//go:build !mygo_custom_backend && (amd64 || arm64) && !android
 
 package glass
 

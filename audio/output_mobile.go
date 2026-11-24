@@ -1,4 +1,4 @@
-//go:build ios || android
+//go:build !mygo_custom_backend && (ios || android)
 
 package audio
 

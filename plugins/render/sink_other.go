@@ -1,4 +1,4 @@
-//go:build !(darwin && !ios) && !windows && !(linux && !android && (amd64 || arm64))
+//go:build mygo_custom_backend || (!(darwin && !ios) && !windows && !(linux && !android && (amd64 || arm64)))
 
 package render
 

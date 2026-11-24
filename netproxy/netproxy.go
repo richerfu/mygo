@@ -72,6 +72,9 @@ func Proxy(req *http.Request) (*url.URL, error) {
 			return envProxy(req)
 		}
 	}
+	if resolve := hostResolver(); resolve != nil {
+		return resolve(req.URL)
+	}
 	return cached(req.URL.Scheme, req.URL.Host), nil
 }
 

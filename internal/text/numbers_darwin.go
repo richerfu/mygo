@@ -1,3 +1,5 @@
+//go:build !mygo_custom_backend
+
 package text
 
 // Core Text's numbers, put together from their characters (numbers.go).

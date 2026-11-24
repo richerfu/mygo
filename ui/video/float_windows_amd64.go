@@ -1,4 +1,4 @@
-//go:build windows
+//go:build !mygo_custom_backend && windows
 
 package video
 

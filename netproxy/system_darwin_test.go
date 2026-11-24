@@ -1,4 +1,4 @@
-//go:build darwin && !ios && (amd64 || arm64) && !ios
+//go:build !mygo_custom_backend && darwin && !ios
 
 package netproxy
 

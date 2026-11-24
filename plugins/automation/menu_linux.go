@@ -1,4 +1,4 @@
-//go:build linux && !android && (amd64 || arm64) && !mygo_noinspector && !android
+//go:build !mygo_custom_backend && linux && !android && (amd64 || arm64) && !mygo_noinspector
 
 package automation
 

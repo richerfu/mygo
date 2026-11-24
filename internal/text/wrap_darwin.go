@@ -1,3 +1,5 @@
+//go:build !mygo_custom_backend
+
 package text
 
 // Core Text's wrapping from one line (wrap.go). Core Text finds line breaks

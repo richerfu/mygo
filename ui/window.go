@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo/i18n"
+	"github.com/egoist/mygo/internal/gpu"
 	"github.com/egoist/mygo/internal/pacing"
 	"github.com/egoist/mygo/internal/platform"
 	"github.com/egoist/mygo/internal/raster"
@@ -697,13 +698,19 @@ func (h *windowHost) makeGPU() {
 	retry := h.gpuTried
 	h.gpuTried, h.retryAt = true, time.Time{}
 	n := h.conn.Surface.Native()
-	if os.Getenv("MYGO_GPU") == "0" || n == (platform.SurfaceNative{}) {
+	factory, custom := h.conn.Surface.(gpu.RendererFactory)
+	if os.Getenv("MYGO_GPU") == "0" || !custom && n == (platform.SurfaceNative{}) {
 		return
 	}
+	var r gpuRenderer
 	var err error
-	r := h.attachParked(n)
-	if r == nil {
-		r, err = newGPU(n)
+	if custom {
+		r, err = factory.NewRenderer()
+	} else {
+		r = h.attachParked(n)
+		if r == nil {
+			r, err = newGPU(n)
+		}
 	}
 	switch {
 	case err != nil:
@@ -816,6 +823,20 @@ func (h *windowHost) capture() (int, int, []byte) {
 	s := h.last
 	if s == nil {
 		return 0, 0, nil
+	}
+	if h.gpu != nil {
+		c, ok := h.gpu.(gpu.Capturer)
+		if !ok {
+			c, ok = h.conn.Surface.(gpu.Capturer)
+		}
+		if ok {
+			width, height, rgba, err := c.Capture(s)
+			// Divide before multiplying so even invalid host dimensions
+			// cannot overflow the buffer-size check.
+			if err == nil && width > 0 && height > 0 && width <= len(rgba)/4/height && len(rgba) == width*height*4 {
+				return width, height, rgba
+			}
+		}
 	}
 	var img raster.Image
 	img.Resize(s.Width, s.Height)
